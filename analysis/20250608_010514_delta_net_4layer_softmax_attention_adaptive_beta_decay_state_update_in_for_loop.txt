@@ -1,0 +1,50 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1         delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+3  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+4    delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+5     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+6      delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+7   delta_net_4layer_sigmoid_similarity_gate_in_for_loop  0.429010        0.998919      0.180641  0.387742      0.998661        0.922861
+8         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+9                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Current MAD Results Recap
+   – Vanilla DeltaNet already excels at long-range memory (Compress 0.44) and noise-robust tasks (Context & Noisy Recall ≈1.0) but falls short on
+        • Fuzzy Recall ≈0.22 (≈ 70 % below Gated DeltaNet 0.31)
+        • Memorize     ≈0.40 (< 0.59 of Gated DeltaNet)
+        • Selective-Copy 0.95 (< 0.997)
+   – Previous modifications show two main trends:
+        • Optimiser-style state updates (Adam, RMSprop, Momentum) severely damage every metric ⇒ heavy implicit smoothing erases useful memories.
+        • Simple decay / gating variants keep strong Context / Noisy recall but do NOT raise Fuzzy / Memorize.
+        • Adding Softmax attention (without state decay) lifted Memorize to 0.78 – a 2× jump – but hurt Fuzzy Recall (0.16).  This hints that sharper (probability-normalised) attentional weights help binding but need better retention control.
+   Conclusion: The bottleneck is still *association precision* (Fuzzy Recall) and *plasticity vs. stability* (Memorize vs. Compress).  Any new change must strengthen key-matching while avoiding wholesale forgetting.
+
+2. New Modification Introduced (inside the chunk loop)
+   delta_net_4layer_softmax_attention_adaptive_beta_decay_state_update_in_for_loop
+   • Softmax-normalised causal attention  – replaces raw dot-products when mixing prediction errors u_i.  This bounds activations and forces competition between keys, sharpening fuzzy matching without destabilising gradients.
+   • Adaptive β-driven decay of memory state S  –  β already encodes prediction-error magnitude.  We convert the *average β* of the current chunk into a forget gate γ = σ( \bar β ).  Update rule:
+        S ← (1−γ)·S + k_iᵀ u_i
+     Large errors → γ≈1 → quick overwrite (better plasticity / Memorize).  Small errors → γ≈0 → memory retained (better Compress, Noisy recall).
+   Both operations are placed **inside the for-loop** directly after the output is written, respecting causality.
+
+3. Expected Impact per MAD Task
+   • Compress  – adaptive γ keeps γ→0 when β is small, so long-range information is preserved; should maintain or slightly improve ~0.44.
+   • Fuzzy Recall  – probabilistic (softmax) attention emphasises the closest key even under 10 % perturbation ⇒ anticipated >0.31 (Gated DN).
+   • Memorize  – we keep the strong boost (0.78 observed with softmax) while avoiding over-writing old pairs thanks to γ-controlled decay.
+   • Noisy Recall & Context Recall  – unchanged mechanisms (error-driven update) + retention gate ⇒ should stay near 1.0.
+   • Selective-Copy  – sharper attention + preserved memories give better distractor suppression ⇒ target ≥0.997.
+
+4. Why Different from Previous Tries
+   – Softmax attention had been tried **without** any state-decay; gating variants used additive decay **without** sharpening attention.  This combination addresses the two previously isolated problems in a single coherent rule.
+
+5. File Updates
+   • New variant saved to:
+       /mnt/iem-nas/home/liuyixiu/AI_Archer/mad-lab/naive/delta_net_4layer_softmax_attention_adaptive_beta_decay_state_update_in_for_loop.py
+   • Overwrote operational file:
+       /mnt/iem-nas/home/liuyixiu/mad-lab/flash-linear-attention/fla/ops/delta_rule/naive.py
+   Both compile and keep the same external API.
+
+6. Next Steps
+   – Re-run MAD benchmark to validate.  Key success criteria: Fuzzy Recall↑, Memorize≥Gated, keep others ≈baseline.
+   – If Compress falls, tune γ mapping (e.g., γ = σ(κ·β̄) with κ<1).

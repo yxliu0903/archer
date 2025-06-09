@@ -1,0 +1,62 @@
+               Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0        delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis of Current Experiment Results
+======================================
+Raw accuracy numbers (from accuracies_df.csv)
+Task                DeltaNet-4L   Gated-DeltaNet-4L   Δ(Gated–Delta)
+--------------------------------------------------------------------
+Compress              0.442            0.367            –0.075  (ΔN better)
+Context Recall        0.999            0.999             0.000  (tie)
+Fuzzy Recall          0.217            0.310             0.093  (GΔN better)
+Memorize              0.403            0.587             0.184  (GΔN better)
+Noisy Recall          0.997            0.999             0.002  (GΔN ≈)
+Selective Copy        0.950            0.997             0.047  (GΔN better)
+--------------------------------------------------------------------
+Average               0.668            0.710             0.042
+
+Insights
+--------
+1. Strengths of vanilla DeltaNet-4L
+   • Excels on Context & Noisy Recall (>0.99).  The error-driven outer-product update already offers strong noise robustness when the key corruption is moderate.
+   • Compress task is *slightly* better than Gated-DeltaNet, indicating that the simpler, un-gated memory occasionally keeps long sequences more faithfully (less decay).
+
+2. Weaknesses
+   • Large gaps on Memorize (-18 pp) and Fuzzy Recall (-9 pp).  These tasks present either out-of-order retrieval or small perturbations to the keys, producing high-variance error terms that overwrite useful memories.
+   • Selective Copy also trails (-5 pp) – again a symptom of interference by distractors.
+
+3. Why Gated-DeltaNet Helps
+   • The learned decay/gating smooths updates, avoiding abrupt overwrites in the presence of noise or distractors, hence higher scores on Fuzzy/Selective Copy and Memorize.
+   • However, too much decay can hurt straight “Compress” where precise, lossless storage is required, explaining Gated’s dip there.
+
+4. Key Take-away for New Variant
+   • We need a mechanism that *stabilises* the memory updates against noisy instantaneous errors *without* introducing the heavy-handed exponential forgetting that harms Compress.
+
+Proposed New Modification (implemented)
+---------------------------------------
+Momentum-Smoothed State Update **inside the main for-loop**
+  m_t = μ·m_{t-1} + (1-μ)·ΔS_t         (EMA of the outer-product update)
+  S_t = S_{t-1} + m_t                 (apply smoothed update after output)
+where ΔS_t = k_t^T · u_t is the original Delta rule update and μ=0.9.
+
+Mathematical Motivation
+• Low-pass filters high-frequency noise in ΔS, giving the model several timesteps to accumulate evidence before committing large state changes.
+• Retains the *sign* of the error term (like Delta rule) so correct associations still reinforce quickly, but reduces variance that causes catastrophic overwrites.
+• Unlike Gated decay (which erodes past memories), momentum only tempers *new* updates – preserving strong long-term memories and thus should not hurt Compress.
+
+Targeted Task Benefits
+• Fuzzy / Noisy Recall & Selective Copy: smoother updates prevent one noisy key from polluting memory.
+• Memorize: stabilised updates reduce interference between out-of-order keys.
+• Compress: no additional decay, so performance should stay at least on par.
+
+Code Placement & Constraints
+• The change is local to the for-loop (after producing o_i).
+• Function name unchanged (`delta_rule_chunkwise`).
+• Causality preserved: state S updated only after o_i is written.
+
+File Updates Written
+1. mad-lab/naive/delta_net_4layer_momentum_state_update_in_for_loop.py
+2. fla/ops/delta_rule/naive.py (same modification for runtime use)
+
+Expected Outcome
+With μ≈0.9 the variant should close the gaps on Memorize and Fuzzy/Selective Copy while keeping strengths on Compress/Noise. Hyper-parameter can be tuned further.

@@ -1,0 +1,41 @@
+                                           Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                    delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1     delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+2  delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+3      delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+4                              gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis
+========
+1.  CSV Results Recap (accuracy, higher is better)
+   • delta_net_4layer (baseline)    → [Compress 0.442, Context 0.999, Fuzzy 0.217, Memorize 0.403, Noisy 0.997, Sel-Copy 0.950]
+   • + Exponential-Decay (state)    → Small drop almost everywhere; no gain – modification ineffective.
+   • + Momentum (state)             → Stronger drops (-Compress, ‑Fuzzy, ‑Sel-Copy); clearly harmful.
+   • + Softmax (in-loop attention) → Huge Memorize jump (0.40 → 0.78) but at the cost of Compress, Fuzzy, Sel-Copy; net average still below gated version.
+   • gated_delta_net_4layer         → Strengthens Fuzzy, Memorize, Sel-Copy (best overall to date) while sacrificing Compress.
+
+   Insights
+   --------
+   • DeltaNet’s strengths: excellent Noisy-Recall & Context-Recall, strong Selective-Copy.
+   • Weaknesses: Fuzzy-Recall (noise ≈ 10 % perturbation) and Memorize/Compress (long-term stability).
+   • Decay & Momentum altered the *magnitude* of state updates uniformly → tended either to under-update (forget) or over-write (interfere).
+   • Softmax made updates more selective but still used a *fixed* learning rate; it fixed catastrophic over-write for Memorize but hurt other tasks.
+
+2.  New Proposal – RMSProp-style Adaptive State Update (implemented)
+   • Keep a running exponential average of the squared “gradient” ΔS = (kᵀ u).  
+   • Scale each incoming ΔS by 1 / √(v² + ε) before adding to S.  
+   • Large, infrequent errors are damped; small, consistent signals accumulate – ideal for:
+       – Long-range retention (Compress) because memory is less perturbed by outliers.
+       – Fuzzy/Noisy Recall where repeated noisy queries gradually refine memory instead of thrashing it.
+   • Mathematically mirrors RMSProp/Adam adaptive learning-rates but performed online inside the for-loop after the output is produced (causality preserved).
+
+3.  Code Change Summary
+   File: flash-linear-attention/fla/ops/delta_rule/naive.py (also copied to naive/ folder)
+   • Added running tensor v_sq (same shape as S) initialised to zeros.
+   • Inside each loop iteration:
+         grad = kᵢᵀ @ uᵢ
+         v_sq = ρ · v_sq + (1-ρ) · grad²
+         adaptive_delta = grad / √(v_sq + ε)
+         S += adaptive_delta
+   • Default ρ = 0.9, ε = 1e-6.  No other behaviour changed.
+
+   This single-file, in-loop modification is novel (not tried in earlier experiments), satisfies all listed constraints, and should directly target DeltaNet’s current weaknesses.

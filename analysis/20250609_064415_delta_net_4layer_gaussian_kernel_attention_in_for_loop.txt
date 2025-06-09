@@ -1,0 +1,63 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1                             delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2              delta_net_4layer_adaptive_gated_softmax_attention_in_for_loop  0.424852        0.998082      0.167910  0.748651      0.993177        0.962474
+3              delta_net_4layer_add_local_softmax_self_attention_in_for_loop  0.431751        0.998026      0.205195  0.727279      0.994433        0.952803
+4   delta_net_4layer_cosine_softmax_attention_error_gated_update_in_for_loop  0.444827        0.996742      0.165556  0.649914      0.988256        0.959016
+5                      delta_net_4layer_cosine_softmax_attention_in_for_loop  0.436265        0.996512      0.162116  0.666553      0.990794        0.934717
+6                            delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+7                      delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+8                 delta_net_4layer_frobenius_renorm_state_update_in_for_loop  0.439120        0.998412      0.208326  0.389314      0.998346        0.944087
+9                      delta_net_4layer_gelu_on_prediction_error_in_for_loop  0.433138        0.998555      0.204038  0.398156      0.998466        0.905582
+10                 delta_net_4layer_hybrid_softmax_raw_attention_in_for_loop  0.386774        0.999059      0.529823  0.612872      0.998455        0.908444
+11                delta_net_4layer_layernorm_qk_before_attention_in_for_loop  0.417799        0.995964      0.168702  0.338787      0.995637        0.689787
+12                       delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+13                        delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+14                               delta_net_4layer_normalize_keys_in_for_loop  0.414407        0.997862      0.159351  0.339369      0.998346        0.951903
+15                         delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+16                                      delta_net_4layer_rope_qk_in_for_loop  0.418859        0.997551      0.176376  0.330314      0.995076        0.972541
+17       delta_net_4layer_sigmoid_error_forget_gate_state_update_in_for_loop  0.425961        0.997450      0.153117  0.401083      0.995883        0.877183
+18                      delta_net_4layer_sigmoid_similarity_gate_in_for_loop  0.429010        0.998919      0.180641  0.387742      0.998661        0.922861
+19                            delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+20                            delta_net_4layer_topk_error_update_in_for_loop  0.334018        0.992124      0.166969  0.404012      0.990607        0.693629
+21                       delta_net_4layer_topk_softmax_attention_in_for_loop  0.394498        0.973047      0.172306  0.436038      0.970196        0.966246
+22                                                    gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Current Landscape from accuracies_df.csv
+• Baseline (delta_net_4layer) – Strengths: almost perfect Context, Noisy‐Recall and Selective‐Copy (~0.95-1.0). Weaknesses: Compress (0.44), Memorize (0.40) and especially Fuzzy-Recall (0.22).
+• Gated-DeltaNet – Lifts Compress to 0.37 and Memorize to 0.59 while pushing Fuzzy-Recall to 0.31, giving a better overall profile than plain DeltaNet.
+• Tried Modifications so far:
+  – Attention side tweaks (softmax, cosine, top-k, RoPE, local softmax) mainly improved Memorize/Compress but left Fuzzy-Recall ≤0.21 (except the Hybrid Raw+Softmax variant that reached 0.53 but sacrificed Compress).
+  – State-update tricks (momentum, decay, RMSProp, Adam, gating) rarely helped; several harmed Context and Noisy-Recall badly.
+  – The best Fuzzy-Recall so far (0.53) comes from “hybrid_softmax_raw_attention”, indicating that similarity measure is a key lever for noise-tolerant retrieval.
+Summary: The bottleneck is still key/value similarity under noisy input (Fuzzy & Noisy-Recall) and interference control in Compress/Memorize. We therefore need a similarity metric that is (i) more tolerant to small perturbations than dot-product, (ii) remains causal and cheap.
+
+2. New Idea – Gaussian (RBF) Kernel Attention inside the for-loop
+Formula within current chunk i (c positions):
+    dist²_{ab} = ||q_a – k_b||²
+    attn_{ab} = exp(-dist²_{ab}/√d_k)
+    attn = causal-masked & row-normalised
+Motivation:
+• Noise Robustness: Euclidean distance emphasises angular + magnitude deviations; Gaussian kernel decays smoothly, avoiding the sharp cliffs of dot-product after normalisation. This should directly raise Fuzzy-Recall and Noisy-Recall.
+• Selectivity: The kernel is sharply peaked for small distances, helping Selective-Copy and Compress where precise mapping is needed.
+• Keeps differentiability and O(c²d) complexity identical to original inner-loop.
+• State-update and error-driven memory (Delta Rule) remain unchanged and are still executed after output to respect causality.
+
+3. Code Changes (in both naive.py and a self-documenting file under naive/)
+Inside the per-chunk loop:
+    – Compute squared Euclidean distance between q_i and k_i
+    – Convert to Gaussian similarity; apply causal mask; renormalise.
+Everything else (u_i error, o_inter, output, S update) is retained.
+
+4. Expected Impact on MAD Tasks
+Compress: Sharper kernel → better matching of identical tokens → minor improvement.
+Fuzzy-Recall & Noisy-Recall: Major uplift due to noise-tolerant similarity.
+Memorize: More selective updates reduce interference; likely uplift.
+Context & Selective-Copy: Already near-perfect; should stay high or improve slightly.
+
+5. File Outputs
+• New variant written to:
+  – /mad-lab/naive/delta_net_4layer_gaussian_kernel_attention_in_for_loop.py
+• Overwrote main implementation in flash-linear-attention/fla/ops/delta_rule/naive.py with the same logic.
+
+6. Next Steps
+Train/evaluate this variant; if Fuzzy/Noisy-Recall rise without hurting others, it may surpass Gated-DeltaNet. If Compress still lags, consider combining Gaussian kernel with local softmax mix.

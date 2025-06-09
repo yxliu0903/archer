@@ -1,0 +1,53 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1                             delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2   delta_net_4layer_cosine_softmax_attention_error_gated_update_in_for_loop  0.444827        0.996742      0.165556  0.649914      0.988256        0.959016
+3                      delta_net_4layer_cosine_softmax_attention_in_for_loop  0.436265        0.996512      0.162116  0.666553      0.990794        0.934717
+4                            delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+5                      delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+6                  delta_net_4layer_hybrid_softmax_raw_attention_in_for_loop  0.386774        0.999059      0.529823  0.612872      0.998455        0.908444
+7                        delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+8                         delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+9                          delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+10                      delta_net_4layer_sigmoid_similarity_gate_in_for_loop  0.429010        0.998919      0.180641  0.387742      0.998661        0.922861
+11                            delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+12                                                    gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis
+========
+1.  Overview of Existing Results
+   •  The *vanilla* 4-layer DeltaNet already beats GLA and almost matches Gated-DeltaNet on the MAD average, but it shows two clear weaknesses:
+        –  Fuzzy-Recall (≈ 21.6 %)
+        –  Memorize      (≈ 40.3 %)
+   •  Past attempts that changed the **state-update rule** (momentum, Adam, RMSprop, decay, error-gated, etc.) or the **similarity kernel** (cosine, softmax, hybrid) produced the following pattern:
+        –  They often raise Fuzzy-Recall and Memorize, sometimes greatly (e.g. hybrid-softmax reached 52.9 % fuzzy and 61.3 % memorize).
+        –  Unfortunately they usually hurt Compress and / or Selective-Copy, and none of them beats Gated-DeltaNet across *all* tasks.
+        –  Optimiser-style updates (Adam/RMSprop) are clearly detrimental, collapsing every score except Compress.
+   •  Take-away: the memory *content* update is already reasonably tuned; the main missing ingredient seems to be a robust way for the network to differentiate identical tokens that appear at different positions – crucial for Compress and Memorize – without harming the noise-robust tasks.
+
+2.  Why Inject Rotary Positional Embeddings (RoPE)
+   •  The current DeltaNet is almost purely content-based; positional information only enters implicitly through sequence order in the loop.  This makes it hard to bind the *same* symbol appearing in two places to two different values.
+   •  RoPE is a light-weight, parameter-free rotation of q & k that encodes *relative* distance while preserving dot-product magnitude.  It therefore:
+        –  Adds order sensitivity required by Compress/Memorize.
+        –  Keeps the low-rank outer-product update intact (no extra parameters or non-linearities).
+        –  Does not interfere with beta-weighted error filtering that already yields excellent noise robustness.
+
+3.  New Modification (implemented)
+   •  File modified: fla/ops/delta_rule/naive.py (and a copy for logging).
+   •  Inside the for-loop, before computing the similarity matrix, we
+        –  Derive absolute positions of the current chunk,
+        –  Compute sin/cos tables once,
+        –  Apply RoPE to q_i and k_i.
+   •  Everything else – u_i, o_inter, delta update of S – is unchanged, and the update is *after* output, preserving causality.
+   •  Expected impact:
+        –  Better positional disambiguation ⇒ higher Compress & Memorize.
+        –  No change to the error term ⇒ Fuzzy-/Noisy-Recall should stay strong.
+        –  Minimal computation & no extra parameters, so runtime and memory footprint are almost identical.
+
+4.  Recommended Next Experiments
+   •  Tune the RoPE frequency base (we used standard 10 000) or even learn a scaling factor.
+   •  Combine RoPE with the previously most successful hybrid-softmax variant to simultaneously exploit positional cues *and* richer similarity metrics.
+
+The new file names:
+   – delta_net_4layer_rope_qk_in_for_loop.py
+
+Modification successful: code compiles, preserves API, and meets the placement requirements (inside the for-loop, state update after output).

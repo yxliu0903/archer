@@ -1,0 +1,46 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+2  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+3     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+4         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+5                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908Analysis of Current Experiment Results
+--------------------------------------
+Raw numbers (accuracy / exact-match) from accuracies_df.csv:
+               Compress  Ctxt-Recall  Fuzzy  Memorize  Noisy  Sel.Copy  Avg
+DeltaNet-base     0.442       0.999   0.217    0.403   0.997     0.950  0.668
++ Exp-Decay       0.435       0.998   0.218    0.364   0.996     0.933  0.657
++ Error-Gate      0.440       0.999   0.227    0.414   0.998     0.899  0.663
++ Momentum        0.432       0.992   0.144    0.370   0.994     0.879  0.635
++ Softmax-Attn    0.428       0.988   0.160    0.779   0.977     0.939  0.712
+Gated-DeltaNet    0.367       0.999   0.310    0.587   0.999     0.997  0.710
+
+Key insights
+• Basic DeltaNet already excels at Context- & Noisy-Recall (>0.99) but struggles with Compress, Fuzzy-Recall and Memorize.
+• Exp-Decay / Error-Gate barely move the needle; gains in Fuzzy/Compress are offset by drops in Selective-Copy.
+• Momentum smoothing actually hurts across the board.  The memory becomes too sluggish.
+• Adding a Softmax inside the local attention drastically boosts the Memorize task (0.78 → highest so far) and lifts the overall average to 0.712, finally beating Gated-DeltaNet (0.710).  However it sacrifices Fuzzy- & Compress accuracy, leaving room for improvement.
+
+What DeltaNet Still Needs
+1. Better *adaptive plasticity* — prevent large noisy updates that wipe out long-term memories (would help Compress & Fuzzy-Recall) while still allowing fast learning for Memorize.
+2. Per-memory-slot discrimination — some keys change frequently, others should stay frozen.
+
+New Modification Proposed & Implemented
+---------------------------------------
+"delta_net_4layer_adam_state_update_in_for_loop"
+• Inside each chunk loop we now treat the outer-product update ΔS like a gradient and apply an **Adam-style adaptive step**:
+    m_t = β₁·m_{t-1} + (1-β₁)·ΔS_t           (1st-moment)
+    v_t = β₂·v_{t-1} + (1-β₂)·ΔS_t²          (2nd-moment)
+    S_t = S_{t-1} + η · m_t / (√v_t + ε)
+• Mathematical motivation: variance-normalised updates give high-variance (noisy) memory cells lower effective learning-rates, protecting stable memories needed for Compress / long-term recall, while low-variance cells adapt quickly (helps Memorize).
+• Novelty: differs from earlier momentum / gating in that it uses *second-moment* scaling — a brand-new direction in these experiments.
+• Implemented strictly after output write-back to keep causality; only the `for` loop body was changed.
+
+Code Locations Written
+1. /mad-lab/naive/delta_net_4layer_adam_state_update_in_for_loop.py (descriptive, reproducible)
+2. /flash-linear-attention/fla/ops/delta_rule/naive.py (runtime path)
+
+Expected Impact
+• Compress & Fuzzy-Recall: adaptive damping should curb catastrophic overwrite, boosting scores.
+• Memorize & Selective-Copy: retains fast adaptation for low-variance updates, so no regression is expected.
+• Overall average should surpass the Softmax variant and further widen the gap with Gated-DeltaNet.

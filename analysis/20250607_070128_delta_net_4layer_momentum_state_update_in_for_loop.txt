@@ -1,0 +1,46 @@
+               Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0        delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Experiment Results Overview (accuracies_df.csv)
+------------------------------------------------
+                  Compress  In-Context  Fuzzy  Memorize  Noisy  Selective
+DeltaNet-4layer     0.442      0.999   0.217    0.403    0.997     0.950
+Gated-DeltaNet      0.367      0.999   0.310    0.587    0.999     0.997
+Average            0.668                0.710
+
+Key observations
+1. DeltaNet still excels at *Compress* (+7.5 % absolute) confirming the value-preserving benefit of the pure Δ-rule.
+2. Gated DeltaNet dominates the other five tasks – especially
+   • Memorize (+18 %)   → indicates that delta updates alone can over-write older associations too aggressively.
+   • Selective Copy (+4.7 %) & Fuzzy Recall (+9.4 %) → reveal vulnerability of raw Δ-updates to noisy / distractor keys.
+3. Both models are almost saturated on In-Context / Noisy Recall, so future gains must mainly come from the three weak spots above.
+
+Effectiveness of Previous Modifications
+• Simple gating helped by attenuating high-magnitude errors, giving smoother memory evolution and thus better robustness.
+• But gating also decayed useful signals, hurting Compress; hence the trade-off.
+
+NEW Proposal Implemented: Momentum-Based Δ-Rule (inside the loop)
+----------------------------------------------------------------
+Rationale
+• Treat consecutive Δ-updates like noisy gradient steps (TTT analogy).  A momentum buffer m_t = μ·m_{t−1}+(1−μ)·ΔS_t low-pass-filters the updates.
+• Benefits
+  – Consolidates consistent directions ⇒ stronger, cleaner associations ⇒ higher Memorize accuracy.
+  – Suppresses high-frequency noise ⇒ better Fuzzy / Selective Copy without weakening long-term retention (unlike explicit decay).
+  – Leaves the valuable plain Δ-rule structure untouched (μ=0 recovers original behaviour), so Compress performance should stay.
+
+Code Location & Changes
+File: flash-linear-attention/fla/ops/delta_rule/naive.py
+Inside the **for-loop** after producing the causal output:
+    delta_S = k_i.T @ u_i
+    m = mu * m + (1-mu) * delta_S   # NEW momentum buffer
+    S = S + m                       # smoothed state update
+Hyper-parameter: mu=0.9 (can be tuned per task).
+
+Expected Impact per MAD Task
+• Memorize   : Accumulated momentum reinforces stable key-value bindings → +15-25 %.
+• Fuzzy Recall: Noisy single-step errors are damped → +8-12 %.
+• Selective Copy: Reduced interference from distractors due to smoother updates → +3-6 %.
+• Compress remains strong; minor gains possible from reduced over-write.
+• In-Context / Noisy Recall already near ceiling; changes should not hurt.
+
+Overall, the momentum-smoothed DeltaNet variant should close (and potentially reverse) the remaining performance gap to Gated DeltaNet while preserving DeltaNet’s superior long-range compression ability.

@@ -1,0 +1,42 @@
+               Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0        delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Experiment Results Examination
+   • Compress: delta_net_4layer = 0.442   gated_delta_net_4layer = 0.367  → Raw DeltaNet already stronger (+7.5 ppts)
+   • In-Context Recall: both ≈ 1.0 – essentially perfect for the two models.
+   • Fuzzy Recall: 0.217 (Δ) vs 0.310 (Gated) – Gated wins by ≈ 9.3 ppts.
+   • Memorize: 0.403 (Δ) vs 0.587 (Gated) – the largest gap; Gated’s adaptive decay clearly helps prevent memory-interference.
+   • Noisy Recall: 0.997 (Δ) vs 0.999 (Gated) – both are near-saturated.
+   • Selective Copy: 0.950 (Δ) vs 0.997 (Gated) – Gated’s explicit forgetting benefits interference-heavy sequences.
+   • Average (unweighted): 0.637 (Δ) vs 0.708 (Gated) – Gated DeltaNet gives the best overall score mainly because of its superior handling of interference-heavy regimes (Fuzzy, Memorize, Selective-Copy).
+
+Key insight: DeltaNet’s pure error-driven update is already excellent for long-range/noisy recall but is too reactive – every local error leads to an immediate strong update. This high-variance behaviour harms memorisation-heavy or distractor-heavy tasks.
+
+2. Effectiveness of Previous Modifications
+   • Vanilla DeltaNet: fast, simple, but update variance too high.
+   • Gated DeltaNet: adds an exponential decay gate, yielding smoother state evolution → better in tasks where aggressive overwriting is harmful.
+   • Both methods still rely on a *single-step* replacement rule.
+
+3. NEW Improvement Proposed & Implemented (this file)
+   • Idea: keep DeltaNet’s error-driven flavour but *temporally smooth* the updates using an optimisation-style momentum buffer (inspired by TTT).  Inside each chunk-processing loop:
+        ΔS   = kᵀ · u                                 # standard delta rule
+        m_t  = μ·m_{t−1} + (1−μ)·ΔS   (μ≈0.9)          # momentum (EMA)
+        S    = S + m_t                                # update memory
+     – The momentum term acts as an adaptive low-pass filter:
+        ▸ Persistent, consistent error signals accumulate (helping Memorize & Compress)
+        ▸ Spurious errors caused by noise/distractors are dampened (improving Fuzzy / Selective Copy)
+     – The change is fully confined to the **for-loop**; causality preserved (output computed before S update).
+
+4. Expected Impact per MAD Task
+   • Compress: smoother reinforcement of the repeatedly correct mapping should improve reconstruction stability (memory decay slows).
+   • Fuzzy & Noisy Recall: momentum damps high-frequency error components, effectively acting like a denoiser ⇒ higher robustness.
+   • Memorize: persistent key-value bindings are reinforced over many timesteps; reduced catastrophic interference.
+   • Selective Copy: distractor-induced erroneous deltas are suppressed; attention to true targets persists longer.
+
+5. File Names & Locations Written
+   ▸ /mnt/iem-nas/home/liuyixiu/AI_Archer/mad-lab/naive/delta_net_4layer_momentum_state_update_in_for_loop.py
+   ▸ /mnt/iem-nas/home/liuyixiu/mad-lab/flash-linear-attention/fla/ops/delta_rule/naive.py
+
+6. Next-Step Suggestion for Experiments
+   • Sweep μ ∈ {0.7, 0.8, 0.9, 0.95} – different tasks may like different smoothness.
+   • Optionally make μ learnable (clipped sigmoid) for further adaptability.

@@ -1,0 +1,53 @@
+                                           Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                    delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1     delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+2  delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+3                              gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Summary of the latest runs (values ≈ accuracy)
+---------------------------------------------------
+                Compress  Ctxt-Rec  Fuzzy  Memorize  Noisy  Sel.Copy
+-------------------------------------------------------------------
+DeltaNet-4L         0.442    0.999   0.217    0.403  0.997     0.950
+Δ-Net + decay       0.435    0.998   0.218    0.364  0.996     0.933
+Δ-Net + momentum    0.432    0.992   0.144    0.370  0.994     0.879
+Gated-Δ-Net-4L      0.367    0.999   0.310    0.587  0.999     0.997
+
+Observations & insights
+-----------------------
+• Context & Noisy Recall are already solved (>99 %) for every variant; further work here has little head-room.
+• Gated DeltaNet sacrifices a little Compress performance but wins big on Fuzzy Recall (+9 pts), Memorize (+18 pts) and Selective Copy (+5 pts).  All three tasks stress interference control and precise retrieval under noise/distractors – exactly what the additional gating / decay was designed for.
+• The two earlier ideas tested inside the loop did not work:
+    – Exponential decay of S produced marginal changes (basically noise).
+    – Momentum update actually hurt Fuzzy (+ Memorize slightly) because it makes the state sluggish, so error-driven corrections arrive too late inside a short chunk.
+  Hence a fundamentally different mechanism is needed.
+
+Why the new change (softmaxed attention) targets the remaining gaps
+------------------------------------------------------------------
+Fuzzy Recall, Memorize and Selective Copy all require the model to pick the *one* correct value/key among many similar ones or noisy intrusions.  In the original dot-product attention the weights are proportional to magnitude; if two keys have similar similarity the model blends them, hurting precision.  Normalising the logits with softmax (after applying the causal mask) converts them into a proper probability distribution:
+    – The distribution is sharp (peaky) when the query is confident, helping Memorize.
+    – It is bounded (≤1) so large noise spikes cannot dominate, helping Fuzzy & Selective.
+    – It keeps gradients well-behaved because the Jacobian of softmax is stable inside [0,1].
+Most importantly, this modification lives wholly inside the for-loop and does not alter the outer‐product state update, so it obeys the given constraints.
+
+Expected task-level impact
+• Compress: negligible change (<±1 pt) because the task depends mostly on the outer-product memory.
+• Fuzzy Recall & Noisy Recall: sharper retrieval ⇒ +8-15 pts expected.
+• Memorize & Selective Copy: less interference ⇒ +10 pts each, closing the gap to Gated Δ-Net.
+
+2. Implemented code change
+--------------------------
+File   : flash-linear-attention/fla/ops/delta_rule/naive.py  (and a copy in naive/)
+Inside the chunk loop:
+    attn_logits = q_i @ k_i.T
+    attn_logits = attn_logits.masked_fill(causal_mask, -inf)
+    attn_weights = softmax(attn_logits, dim=-1)   # <-- NEW
+    o[..., i] = o_inter + attn_weights @ u_i
+The state update S ← S + kᵀ @ u_i is left untouched and is executed *after* the output is stored, preserving causality.
+No new parameters; negligible extra compute (a single exp & normalisation per chunk).
+
+3. Relation to previous attempts
+• It is orthogonal to the earlier “decay” and “momentum” tries – it focuses on *read-out normalisation* instead of state dynamics.
+• It respects all listed requirements: single-file change, inside the for-loop, mathematically motivated, maintains update order.
+
+4. Next steps for validation
+Run the MAD benchmark again; if the hypothesis holds we should see Δ-Net overtaking the Gated variant on Memorize, Fuzzy and Selective while keeping its strong Compress score, thus achieving the overall objective.

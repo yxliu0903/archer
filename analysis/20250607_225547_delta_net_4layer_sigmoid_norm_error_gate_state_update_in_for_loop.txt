@@ -1,0 +1,42 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1         delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+3  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+4    delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+5     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+6      delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+7         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+8                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Summary of Existing Results
+• Baseline DeltaNet already excels at In-Context Recall (≈1.0), Noisy Recall (≈1.0) and Selective-Copy (≈0.95) but remains weak on Compress (0.44), Memorise (0.40) and especially Fuzzy-Recall (0.22).
+• Gated-DeltaNet pushes the overall average to ≈0.71 mainly by raising Fuzzy-Recall (0.31) and Memorise (0.59) but still leaves room for improvement.
+• Previous one-file modifications show the following trends:
+  – Adding exponential decay or momentum barely changes the weak Fuzzy-Recall scores (still ≈0.14-0.23).
+  – LayerNorm/softmax attention improve Memorise (softmax jumps to 0.78) yet Compress & Fuzzy-Recall remain the bottleneck.
+  – Optimisation-based Adam / RMSProp updates destroy performance, confirming that aggressive adaptive steps are harmful at inference-time.
+  – Error-gated update (linear gate) helped slightly but did not fully solve the noise-sensitivity issue.
+The limiting factor is therefore the quality of the error signal injected into the state: small, noisy residual errors are still written, polluting memory and degrading Fuzzy-Recall and Compress.
+
+2. New Modification Introduced Here
+Sigmoid-Norm Error Gating inside the for-loop (file naïve.py).
+Key idea: scale the error before it is written into memory by a gate g_i = σ(∥u_i∥).  Large true errors (wrong associations) receive g≈1, while small residuals caused by noise/round-off are suppressed (g≈0.5→0).  The gate is lightweight (one norm + sigmoid) and causal (state update happens after output computation).
+Mathematical motivation: acts as an adaptive learning-rate proportional to error magnitude, reminiscent of confidence-based learning.  It should:
+• Reduce memory corruption from noisy keys → better Fuzzy & Noisy Recall.
+• Keep correct associations stable → better long-range Compress.
+• Retain the strengths of DeltaNet on context-driven tasks.
+
+3. Expected Impact on MAD Tasks
+Compress: fewer spurious updates → longer retention.
+Fuzzy Recall & Noisy Recall: noise-induced small errors get filtered out → higher accuracy.
+Memorise: large errors still corrected, so similar or better.
+Selective Copy / In-Context Recall: should stay unchanged (they were already strong).
+Overall average should therefore surpass current Gated-DeltaNet (>0.71) across all tasks.
+
+4. File Changes
+• /mnt/…/naive/delta_net_4layer_sigmoid_norm_error_gate_state_update_in_for_loop.py – new variant saved.
+• /mnt/…/flash-linear-attention/fla/ops/delta_rule/naive.py – overwritten with the same implementation so the rest of the codebase picks it up.
+Both keep the same function name (delta_rule_chunkwise) and external interface; only the body of the for-loop is altered.
+
+5. Next Steps
+Run the MAD benchmark again with this variant.  If gains are confirmed, one can explore other smooth gating functions (tanh, swish) or combine this gate with the earlier softmax-attention idea for complementary benefits.

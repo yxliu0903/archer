@@ -1,0 +1,57 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1                             delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2              delta_net_4layer_add_local_softmax_self_attention_in_for_loop  0.431751        0.998026      0.205195  0.727279      0.994433        0.952803
+3   delta_net_4layer_cosine_softmax_attention_error_gated_update_in_for_loop  0.444827        0.996742      0.165556  0.649914      0.988256        0.959016
+4                      delta_net_4layer_cosine_softmax_attention_in_for_loop  0.436265        0.996512      0.162116  0.666553      0.990794        0.934717
+5                            delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+6                      delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+7                      delta_net_4layer_gelu_on_prediction_error_in_for_loop  0.433138        0.998555      0.204038  0.398156      0.998466        0.905582
+8                  delta_net_4layer_hybrid_softmax_raw_attention_in_for_loop  0.386774        0.999059      0.529823  0.612872      0.998455        0.908444
+9                 delta_net_4layer_layernorm_qk_before_attention_in_for_loop  0.417799        0.995964      0.168702  0.338787      0.995637        0.689787
+10                       delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+11                        delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+12                               delta_net_4layer_normalize_keys_in_for_loop  0.414407        0.997862      0.159351  0.339369      0.998346        0.951903
+13                         delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+14                                      delta_net_4layer_rope_qk_in_for_loop  0.418859        0.997551      0.176376  0.330314      0.995076        0.972541
+15                      delta_net_4layer_sigmoid_similarity_gate_in_for_loop  0.429010        0.998919      0.180641  0.387742      0.998661        0.922861
+16                            delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+17                            delta_net_4layer_topk_error_update_in_for_loop  0.334018        0.992124      0.166969  0.404012      0.990607        0.693629
+18                       delta_net_4layer_topk_softmax_attention_in_for_loop  0.394498        0.973047      0.172306  0.436038      0.970196        0.966246
+19                                                    gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Experiment-wide Insights
+========================
+1. Baseline Comparison
+   • DeltaNet (4-layer) already excels at Context Recall (>0.99) and Noisy Recall (>0.99) but is weak on   Compress (0.44), Memorize (0.40) and especially Fuzzy Recall (0.22).  
+   • Gated DeltaNet improves Memorize (0.59) and Selective-Copy (0.997) but only modestly raises Fuzzy Recall (0.31); its average accuracy is 0.709.
+
+2. Previous Modification Trends
+   • Adding local / hybrid softmax attention dramatically helps Fuzzy Recall (up to 0.53) and Memorize (0.73) while keeping other scores high – lifting the overall average to ≈0.74 and already beating Gated DeltaNet.  
+   • Error-gating, GELU-on-error, state-decay, momentum, RMSprop, Adam etc. had mixed results: they preserved robustness but tended to harm Compress & Memorize, leading to lower averages than the best attention-based tweaks.  
+   • The clearest pattern: *improving the similarity measure inside the per-chunk attention is the most reliable lever for boosting the two hardest tasks (Fuzzy / Memorize) without sacrificing the easy ones.*
+
+3. Remaining Weaknesses of the Best Variant
+   • Even the “hybrid softmax” model still underperforms on Compress (0.39 vs 0.44 baseline) and has head-room on Memorize (0.61 vs Gated 0.59, but far from perfect).  
+   • Noise tolerance is already near-saturated; therefore further gains must come from *more discriminative yet bounded* similarities that curb spurious correlations while maintaining sharp retrieval for true matches.
+
+4. New Proposal: **RBF-Softmax Attention inside the for-loop**
+   Why different: every earlier attempt kept the similarity as a (possibly normalised) dot-product.  We switch to an L2-distance based Gaussian kernel followed by softmax:
+
+       sim_{ij} = −‖q_i − k_j‖² / √d_k ,  a = softmax(sim)
+
+   Expected Gains
+   • Bounded similarity ⇒ prevents large positive scores for unrelated but high-norm vectors; helps Compress & Memorize where interference is common.  
+   • Distance metric aligns with associative retrieval ⇒ sharper fuzzy matches, improved Fuzzy Recall.  
+   • Softmax converts the error mixture into a convex combination ⇒ stabilises learning signal.
+
+5. Implementation Highlights
+   • Only the attention computation inside the loop is touched; the Delta update order remains causal.  
+   • Complexity remains O(C²d) per chunk – identical to dot-product.  
+   • Code paths for JIT / TorchScript unchanged; merely replaces a matmul with a broadcasting subtract + squared-sum.
+
+6. Path & Naming
+   • New file written to:   /mnt/iem-nas/home/liuyixiu/AI_Archer/mad-lab/naive/delta_net_4layer_rbf_softmax_attention_in_for_loop.py  
+   • Main operator in flash-linear-attention replaced accordingly.  
+   • Name encodes exactly *what* (RBF-softmax attention) and *where* (in for-loop) the change occurs.
+
+We therefore expect higher scores on Compress, Fuzzy Recall and Memorize while keeping existing strengths – a credible path to surpass Gated DeltaNet across the board.

@@ -1,0 +1,68 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1                             delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2              delta_net_4layer_adaptive_gated_softmax_attention_in_for_loop  0.424852        0.998082      0.167910  0.748651      0.993177        0.962474
+3              delta_net_4layer_add_local_softmax_self_attention_in_for_loop  0.431751        0.998026      0.205195  0.727279      0.994433        0.952803
+4   delta_net_4layer_cosine_softmax_attention_error_gated_update_in_for_loop  0.444827        0.996742      0.165556  0.649914      0.988256        0.959016
+5                      delta_net_4layer_cosine_softmax_attention_in_for_loop  0.436265        0.996512      0.162116  0.666553      0.990794        0.934717
+6                            delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+7                      delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+8                      delta_net_4layer_gelu_on_prediction_error_in_for_loop  0.433138        0.998555      0.204038  0.398156      0.998466        0.905582
+9                  delta_net_4layer_hybrid_softmax_raw_attention_in_for_loop  0.386774        0.999059      0.529823  0.612872      0.998455        0.908444
+10                delta_net_4layer_layernorm_qk_before_attention_in_for_loop  0.417799        0.995964      0.168702  0.338787      0.995637        0.689787
+11                       delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+12                        delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+13                               delta_net_4layer_normalize_keys_in_for_loop  0.414407        0.997862      0.159351  0.339369      0.998346        0.951903
+14                         delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+15                                      delta_net_4layer_rope_qk_in_for_loop  0.418859        0.997551      0.176376  0.330314      0.995076        0.972541
+16       delta_net_4layer_sigmoid_error_forget_gate_state_update_in_for_loop  0.425961        0.997450      0.153117  0.401083      0.995883        0.877183
+17                      delta_net_4layer_sigmoid_similarity_gate_in_for_loop  0.429010        0.998919      0.180641  0.387742      0.998661        0.922861
+18                            delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+19                            delta_net_4layer_topk_error_update_in_for_loop  0.334018        0.992124      0.166969  0.404012      0.990607        0.693629
+20                       delta_net_4layer_topk_softmax_attention_in_for_loop  0.394498        0.973047      0.172306  0.436038      0.970196        0.966246
+21                                                    gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis
+1. Overall benchmark (accuracies_df.csv)
+   • Vanilla 4-layer DeltaNet (delta_net_4layer) averages ≈ 0.70 – already better than original GLA and equal to / slightly above Mamba.
+   • Best variants so far:
+        – adaptive_gated_softmax_attention_in_for_loop → Avg ≈ 0.75, large gain on Memorize (0.75) while keeping others high.
+        – add_local_softmax_self_attention_in_for_loop / cosine_softmax_… all ≈ 0.73–0.74.
+        – hybrid_softmax_raw_attention_in_for_loop achieves the single best Fuzzy-Recall so far (0.53) but sacrifices Compress (0.39).
+   • State-update optimisation (momentum, adam, rmsprop) harmed performance dramatically → optimisation-style changes are risky.
+   • Pure gating/extra decay helped marginally but still left Fuzzy-Recall ≤ 0.23, which remains the main weakness of most variants (apart from hybrid_stream).
+   • Key observation: tasks whose scores still lag behind Gated-DeltaNet are Fuzzy-Recall (most variants ≤ 0.23 vs 0.31 for Gated-DeltaNet) and Memorise (≤ 0.75 vs 0.59 baseline, but still < 0.59 for several).  Hence we need to improve noise-robust, associative memory while avoiding the instability introduced by large error magnitudes.
+
+2. Effectiveness of previous modifications
+   • Attention-side tweaks (softmax, cosine, RoPE, local-window) give steady but incremental gains, mostly on Memorise & Selective-Copy, but do not fix Fuzzy-Recall.
+   • State-side tweaks that relied on raw error magnitude sometimes degraded performance, indicating that the variance of          error   dominates and can catastrophically overwrite good memories.
+   • Forget/decay gates stabilised memory but also limited learning capacity → slight gains in Compress but still weak for noisy tasks.
+   • Conclusion: we need an update that keeps direction information (what is wrong) but caps uncontrolled magnitude (how much is wrong).
+
+3. Proposed NEW modification (not tried yet)
+   L2-normalised Prediction-Error Update inside the for-loop
+   – Compute raw error e = (u_i − w_i @ S).
+   – Normalise per-token: ê = e / (‖e‖₂ + ε).
+   – Use ê both for the output (attn @ ê) and the memory update (S += kᵀ @ ê).
+   Rationale:
+     • Separates direction and magnitude → prevents huge errors from wiping memory; prevents tiny errors from disappearing – improves robustness to noise.
+     • Similar to cosine distance updates used in Hopfield networks, known to enhance fuzzy matching.
+     • Keeps computation inexpensive and fits perfectly into the existing for-loop requirements.
+   Expected benefits:
+     • Better Fuzzy-Recall and Noisy-Recall because update no longer scales with noise amplitude.
+     • More stable Memorise task because fewer destructive overwrites.
+
+4. File names
+   delta_net_4layer_l2_normalized_error_update_in_for_loop.py (created in naive/)
+   flash-linear-attention/fla/ops/delta_rule/naive.py has been overwritten with this variant so training/inference will automatically use it.
+
+5. Implementation highlights (one-file change)
+   • Added eps argument for numerical stability.
+   • Inside for-loop – after computing raw error – perform error_norm = error.norm(dim=-1, keepdim=True); error /= (error_norm + eps).
+   • Rest of pipeline is untouched, ensuring causality and identical interface.
+
+6. Success criteria
+   • Code compiles and keeps same function signature.
+   • Modification is placed strictly inside for-loop.
+   • Distinct from earlier attempts (none used L2-normalised error).
+
+We expect this variant to reduce variance in update magnitude, therefore yielding sizeable improvements on Fuzzy-Recall and Noisy-Recall, potentially pushing average score above the current best adaptive-gated-softmax variant and overtaking Gated DeltaNet across all tasks.

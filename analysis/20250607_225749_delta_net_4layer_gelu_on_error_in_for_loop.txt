@@ -1,0 +1,42 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1         delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+3  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+4    delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+5     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+6      delta_net_4layer_rmsprop_state_update_in_for_loop  0.333525        0.084800      0.030725  0.378087      0.031335        0.123251
+7         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+8                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis
+1. CSV Results Overview
+• Baseline DeltaNet (delta_net_4layer) already beats Mamba/GLA average (≈ 70 vs 60-69) but is still behind the provided Gated-Delta implementation on Compress (+0.44 vs 0.37) yet clearly worse on Memorize (0.40 vs 0.59) and Fuzzy-Recall (0.22 vs 0.31).
+• Earlier ablations show that simply injecting optimisation tricks (momentum, Adam, RMSprop) or naive decay badly hurts context & noisy recall → they disturb the well-tuned error signal.
+• LayerNorm / Softmax helped stability but did not noticeably raise Fuzzy-Recall.
+• The best previous attempt (error-gated state) reaches Avg ≈ 0.66 < baseline.
+
+Key Observations
+• The single largest gap to Gated-DeltaNet is Fuzzy-Recall (0.22 vs 0.31). DeltaNet already reaches ≈1.0 on Context & Noisy Recall so we must improve fuzzy/ memorise without hurting others.
+• All unsuccessful variants directly scale or add momentum to the error term, often amplifying extreme values and causing catastrophic interference.
+
+Insight & New Idea
+Introduce a smooth non-linear gating on the prediction-error before it is written to memory. GELU acts like a soft mask: small errors pass almost unchanged, but large spikes are compressed, preventing over-correction. This should
+• Reduce noise sensitivity (benefit Fuzzy & Memorize),
+• Keep clean-recall intact because moderate errors are preserved,
+• Require no extra learnable parameters or global state – entirely local, inside for-loop.
+
+Code Modification Summary
+File: fla/ops/delta_rule/naive.py (and saved copy under ‘naive/…’ for training scripts)
+In the for-loop we replaced
+    u_i = u[:, :, i] − w[:, :, i] @ S
+with
+    u_i = GELU( u[:, :, i] − w[:, :, i] @ S )
+Then the GELU-filtered error drives both the output (attn_local @ u_i) and the state update (S += k_iᵀ @ u_i).
+No other logic is touched; causality preserved.
+
+Expected Impact
+• Suppresses extreme error spikes → stabilises memory matrix → less interference across key-value pairs.
+• Improves noisy/Fuzzy recall where raw error may be large due to noisy key.
+• Should not reduce performance on tasks already near perfect because GELU is near-linear for small |x|.
+
+Name

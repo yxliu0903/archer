@@ -1,0 +1,49 @@
+               Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0        delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Experiment Result Analysis
+-------------------------
+We loaded the latest MAD-suite results (accuracies_df.csv):
+  • delta_net_4layer        –  Compress 0.442 | Context 0.999 | Fuzzy 0.217 | Memorise 0.403 | Noisy 0.997 | SelCopy 0.950 | AVG≈0.668
+  • gated_delta_net_4layer  –  Compress 0.367 | Context 0.999 | Fuzzy 0.310 | Memorise 0.587 | Noisy 0.999 | SelCopy 0.997 | AVG≈0.710
+Key observations
+1. Strengths / Weaknesses
+   • DeltaNet already excels at very long-term and noise-free tasks (Compress, Noisy Recall).
+   • It lags Gated-DeltaNet on Fuzzy Recall (+0.09), Memorise (+0.18) and Selective-Copy (+0.05).  These three tasks are precisely those where conflicting / noisy associations accumulate during the sequence.
+2. Cause Analysis
+   • The plain Δ-rule performs an *immediate* outer-product update.  Large instantaneous errors can over-shoot, especially when keys are noisy or highly correlated; this hurts robustness (Fuzzy/Selective) and causes unstable build-up (Memorise).
+   • Gated-DeltaNet mitigates this with decay/gating, smoothing the update stream, hence its better stability.
+3. Desired property to close the gap: apply a smoothing / low-pass filter to the update signal but **without** an extra gating head (to keep the architecture light).
+
+New Modification – Momentum State Update
+---------------------------------------
+Motivation
+• Classic optimisation shows that SGD+momentum integrates gradients exponentially, suppressing high-frequency noise while preserving long-term trends.  Translating this to the Δ-rule should (i) damp spurious updates from noisy keys, (ii) stabilise memory build-up, and (iii) retain DeltaNet’s strong ability to make large corrections when errors persist.
+Implementation (inside the for-loop)
+```
+grad = k_i^T @ u_i                 # instantaneous Δ-rule gradient
+m    = μ * m + (1-μ) * grad        # momentum buffer (μ=0.9 by default)
+S    = S + m                       # smoothed memory update
+```
+• m is kept between timesteps, giving an exponential moving average of past gradients.
+• The change is strictly *after* the output write, preserving causality.
+• No other code paths or interfaces changed; computational overhead is negligible (one extra tensor, two fused ops).
+
+Expected Impact
+• Fuzzy & Noisy Recall: momentum acts as an adaptive low-pass filter – noisy, short-lived deviations are damped.
+• Memorise: smoother state trajectory reduces catastrophic interference from conflicting keys.
+• Selective Copy: fewer spurious associations should improve precision.
+• Compress & Context Recall: behaviour virtually unchanged (they already rely on long-term integration, which momentum preserves).
+
+If the hypothesis holds we should see: +5–10% on Fuzzy, +5–15% on Memorise, +2–4% on Sel-Copy; overall average surpassing Gated-DeltaNet.
+
+File Updates
+------------
+1. flash-linear-attention/fla/ops/delta_rule/naive.py   → injected momentum logic.
+2. naive/delta_net_4layer_momentum_state_update_in_for_loop.py → standalone copy for ablation / checkpointing.
+Both keep the original function name `delta_rule_chunkwise` so the wider codebase remains untouched.
+
+Next Steps
+• Tune μ (0.8–0.95) per task length.
+• Optionally anneal μ with sequence depth to combine fast adaptation at the beginning with stronger smoothing later.
+• Combine with a tiny learned β rescaling head for further gains.

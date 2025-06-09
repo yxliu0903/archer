@@ -1,0 +1,45 @@
+                                           Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                    delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+2                              gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+Analysis
+1. Printing the content of accuracies_df.csv:
+   Model                                   Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+   -------------------------------------------------------------------------------------------------------------
+   delta_net_4layer                        0.442     0.999           0.217         0.403     0.997         0.950
+   delta_net_4layer_momentum_state_update  0.432     0.992           0.144         0.370     0.994         0.879
+   gated_delta_net_4layer                  0.367     0.999           0.310         0.587     0.999         0.997
+
+   (Averages)
+   • DeltaNet-4L               ≈ 66.8 %
+   • DeltaNet-4L + Momentum    ≈ 63.5 %
+   • Gated-DeltaNet-4L         ≈ 71.0 %
+
+2. Insights
+   • Gated DeltaNet remains the best overall, mainly because it lifts the two weakest areas of plain DeltaNet – Memorize (+18 pp) and Fuzzy Recall (+9 pp) – while keeping its strengths (≈100 % on Context and Noisy Recall; ≈99.7 % on Selective Copy).
+   • The momentum-based state update hurts: both Fuzzy (-7 pp) and Selective Copy (-7 pp) drop, so naïve momentum introduces too much inertia and interferes with rapidly-changing bindings.
+   • All Delta-style variants already excel at noise-related tasks (> 99 %). Therefore the most valuable headroom lies in:
+       – Fuzzy Recall (21–31 %)
+       – Memorize   (40–59 %)
+       – Compress   (37–44 %)
+
+3. New modification proposed and implemented (inside the for-loop of delta_rule_chunkwise):
+   Exponential decay of the memory matrix S before the outer-product update:
+       S = decay * S + k_iᵀ @ u_i      with decay = 0.9
+   Motivation
+   • Catastrophic interference in Memorize/Fuzzy comes from stale, conflicting bindings that are never weakened.  A simple, differentiable forgetting factor clears room for fresh associations while still keeping high-priority memories alive for ≈10 steps (when decay = 0.9).
+   • Retains causality: output o is computed first, then S is updated.
+   • Minimal overhead, no extra parameters (decay could later be made learnable).
+
+4. File updates
+   • New variant saved to:
+       /mnt/iem-nas/home/liuyixiu/AI_Archer/mad-lab/naive/delta_net_4layer_decay_state_update_in_for_loop.py
+   • The same logic replaces the original implementation at:
+       /mnt/iem-nas/home/liuyixiu/mad-lab/flash-linear-attention/fla/ops/delta_rule/naive.py
+
+   Both files compile and keep the function signature unchanged.
+
+Expected Impact
+   – Should suppress accumulation of outdated information → higher Memorize accuracy.
+   – By soft-resetting S every chunk, the network can form cleaner error-driven updates, which should also help Fuzzy Recall.
+   – Little to no loss on tasks where DeltaNet already achieves ≈100 % because these rely on very recent bindings.

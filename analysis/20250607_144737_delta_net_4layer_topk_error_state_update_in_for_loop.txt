@@ -1,0 +1,49 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+2  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+3     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+4         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+5                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Summary of Existing Results
+• DeltaNet (4-layer) is already very strong on Context Recall (≈1.0) and Noisy Recall (≈1.0) and good on Selective-Copy (≈0.95) but lags in Compress (~0.44), Memorize (~0.40) and especially Fuzzy-Recall (~0.22).  
+• Simple decay of the state lowered Memorize and Selective-Copy and gave no meaningful gain elsewhere.  
+• Momentum hurt Fuzzy-Recall badly (0.14) and lowered nearly every metric – indicating that accumulated historical gradients blur precise associations.  
+• Adding a Softmax inside the loop increased Memorize sharply (0.78) but further degraded Compress and Fuzzy-Recall; the Softmax normalises away small but still-useful errors, harming compression-like tasks.  
+• Error-gated updates offered the best trade-off so far: +0.01 on Fuzzy-Recall and +0.01 on Memorize without harming Compress, but it reduced Selective-Copy (0.90) so the global average stayed similar to baseline.  
+• Gated-DeltaNet is the current winner overall because it boosts every task except Compress; its strong selective gating gives the best Memorize (0.59) and Fuzzy-Recall (0.31) and almost perfect Selective-Copy (0.997)
+
+Key Take-aways
+• The weakest spots for all DeltaNet flavours are still Compress (long-range retention) and Fuzzy-Recall (noise-robust associative retrieval).  
+• Good Memorize / Selective-Copy performance requires writing *only the truly informative* errors; most previous variants still push every error (decay, momentum, gating scale) or scale them softly.  
+• What worked: sharpening the update focus (error-gate) and adding stronger non-linear selection (Softmax for Memorize).  
+• What failed: indiscriminate accumulation (momentum) or uniform decay.
+
+2. New Modification Proposed – Top-k Error Driven Updates (inside the for-loop)
+Rationale
+• Limit the write bandwidth so that only the tokens with the largest prediction error per chunk are allowed to update the persistent memory.  
+• This directly addresses Compress (avoids saturation of S over long horizons) and Fuzzy- / Noisy-Recall (less interference from small noisy updates).  
+• Mathematically: let u_i be the prediction error vectors for the current chunk, err_i = ‖u_i‖²; keep the k indices with largest err_i and zero-out others before the outer-product state update.  
+• Complexity: identical to baseline (simple masking); fully parallelisable; state update still occurs after producing output → preserves causality.
+
+Implementation Highlights (see code)
+• Added two arguments: chunk_size (unchanged) and top_k (defaults to 4).  
+• Compute err = mean(u_i²) across value dim; use torch.topk to obtain indices; build a boolean mask and apply it to u_i.  
+• Output is computed with the full error (for better gradient signal), but the state S is updated only with the sparse u_i.  
+• The rest of the algorithm—including chunked causal attention and pre-computed u & w—remains untouched.
+
+Expected Impact
+• Compress: mitigates memory dilution by reserving capacity for high-error (information-rich) tokens → better long-range retention.  
+• Fuzzy- & Noisy-Recall: reduces the chance that low-error, noisy keys overwrite correct associations → higher recall accuracy.  
+• Memorize: focuses on the hardest pairs first, similar to curriculum learning; should at least match Gated-DeltaNet.  
+• Selective-Copy: leaving output calculation unchanged keeps near-perfect performance.
+
+3. Where the Change Lives
+Modification is entirely inside the main for-loop of delta_rule_chunkwise in naive.py.
+
+4. File Updates
+• Created new variant file: /naive/delta_net_4layer_topk_error_state_update_in_for_loop.py  
+• Overwrote core operator at fla/ops/delta_rule/naive.py with the Top-k implementation.
+
+5. Next Steps for Experiments
+Run the MAD benchmark with different values of top_k (2–8).  We expect an elbow around k≈4–6 where Compress and Fuzzy-Recall climb without harming Context-Recall.

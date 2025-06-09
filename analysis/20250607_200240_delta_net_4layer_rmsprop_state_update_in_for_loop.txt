@@ -1,0 +1,62 @@
+                                              Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                       delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1         delta_net_4layer_adam_state_update_in_for_loop  0.337757        0.089304      0.024024  0.384297      0.023897        0.196143
+2        delta_net_4layer_decay_state_update_in_for_loop  0.435427        0.998480      0.218365  0.363693      0.996212        0.932825
+3  delta_net_4layer_error_gated_state_update_in_for_loop  0.439931        0.998649      0.227001  0.414150      0.998151        0.898605
+4    delta_net_4layer_layernorm_state_update_in_for_loop  0.425510        0.995487      0.166240  0.357337      0.992839        0.873239
+5     delta_net_4layer_momentum_state_update_in_for_loop  0.432281        0.992050      0.144458  0.369833      0.993707        0.879067
+6         delta_net_4layer_softmax_attention_in_for_loop  0.427559        0.987641      0.160105  0.779396      0.977399        0.939016
+7                                 gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+1. Overview of Existing Variants (accuracies_df.csv)
+   • delta_net_4layer (baseline)
+     – Strength: best Compress (0.442) & Noisy-Recall (0.997)
+     – Weakness: Fuzzy-Recall (0.217) and Memorize (0.403) trail Gated-DeltaNet.
+   • +Decay / +Error-Gated
+     – Nearly identical to baseline; minor Fuzzy-Recall bump (→0.227) but Selective-Copy drops.
+   • +LayerNorm / +Momentum
+     – Both hurt Fuzzy-Recall (≤0.17) and give no Memorize gain.
+   • +Softmax-Attention
+     – Large Memorize jump to 0.779 and Selective-Copy 0.939, but Fuzzy-Recall still very low (0.16).
+
+   Conclusion: So far we have not produced a variant that simultaneously beats Gated-DeltaNet on Fuzzy-Recall, Memorize and Selective-Copy – the sticking point is still Fuzzy-Recall.
+
+2. Insight on Modification Effectiveness
+   • Operations that change the *shape* of the error term (Decay, Error-Gate) mainly influence global stability, leaving noise-sensitive retrieval mostly unchanged.
+   • Softmax inside the chunk provides sharper local attention and strongly helps Memorize, confirming that better key discrimination benefits ordered retrieval; yet, because it does not regularise the *magnitude* of memory updates, it does not improve noisy / fuzzy cases.
+   • LayerNorm & Momentum normalise activations but lower effective learning-rate too much, impeding new associations – hence poor Fuzzy-Recall.
+
+   Take-away: We need an update rule that (a) preserves strong learning for new pairs (helps Memorize) while (b) adaptively down-weights overly large or noisy updates (helps Fuzzy-Recall, Noisy-Recall) without erasing existing information.
+
+3. NEW Proposal – RMSProp-Style Adaptive State Update (implemented inside the for-loop)
+   Motivation
+   • Prediction-error outer-product (grad) has highly variable scale across heads, time-steps and dimensions.
+   • Large gradients corrupt memory and hurt fuzzy matching; small gradients in rarely used cells never get a chance to learn.
+   • RMSProp (running second moment) equips every memory cell with its own adaptive learning-rate.  This keeps updates well-conditioned and should:
+       – Filter out noisy spikes → better Fuzzy-/Noisy-Recall.
+       – Still allow confident low-variance gradients to flow → keep or improve Memorize.
+
+   Mathematical change inside for-loop (after producing output):
+       grad = k_i^T @ u_i                    # classical delta update
+       V   = ρ V + (1-ρ) grad^2             # second moment (per cell)
+       S   = S + β̄ * grad / (√V + ε)       # adaptive step (β̄ = mean β in chunk)
+
+   • ρ=0.9, ε=1e-8 ensure smooth, stable scaling.
+   • Preserves causality because S is updated only *after* o for current chunk is written.
+
+4. File Updates
+   • Saved new variant code to:
+       mad-lab/naive/delta_net_4layer_rmsprop_state_update_in_for_loop.py
+   • Synchronized production implementation at:
+       mad-lab/flash-linear-attention/fla/ops/delta_rule/naive.py
+
+   Both keep the original function name `delta_rule_chunkwise`, satisfying import contracts.
+
+5. Expected Impact relative to Gated-DeltaNet
+   • Compress – unchanged (still strong)
+   • Fuzzy-Recall – adaptive down-scaling of noisy updates should increase accuracy, aiming to close the 0.10 gap.
+   • Memorize – retains Softmax-like high learning rate for consistent gradients, so should exceed 0.58 of Gated-DeltaNet.
+   • Selective-Copy – improved stability plus existing attention scheme expected to push >0.997.
+
+6. Next Steps
+   • Re-run MAD benchmark with this variant.
+   • If Fuzzy-Recall improves while Maintain/Increase Memorize, we will surpass Gated-DeltaNet’s average score and achieve the stated objective.
