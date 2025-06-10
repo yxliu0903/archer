@@ -22,7 +22,6 @@
 20                            delta_net_4layer_topk_error_update_in_for_loop  0.334018        0.992124      0.166969  0.404012      0.990607        0.693629
 21                       delta_net_4layer_topk_softmax_attention_in_for_loop  0.394498        0.973047      0.172306  0.436038      0.970196        0.966246
 22                                                    gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
-
 1. Quick view of latest experiment table (MAD-scores are fractions of 100):
 • Baseline delta_net_4layer ≈ 0.44 Compress / 1.00 Ctx-Recall / 0.22 Fuzzy / 0.40 Memorize / 1.00 Noisy / 0.95 Sel-Copy.
 • Best-so-far variants:
