@@ -53,7 +53,7 @@ if txt_files:
                     
                     # 创建表格头
                     table_data = []
-                    table_data.append(['模型名称', 'Compress', 'Context Recall', 'Fuzzy Recall', 'Memorize', 'Noisy Recall', 'Selective Copy'])
+                    table_data.append(['模型名称', 'Compress', 'Context Recall', 'Fuzzy Recall', 'Memorize', 'Noisy Recall', 'Selective Copy', 'Average'])
                     
                     # 查找表格数据行
                     j = i + 1
@@ -64,13 +64,25 @@ if txt_files:
                             if len(parts) >= 7:
                                 model_name = ' '.join(parts[1:-6])
                                 metrics = parts[-6:]
-                                # 格式化数字
+                                # 格式化数字并计算平均值
                                 formatted_metrics = []
+                                numeric_metrics = []
                                 for m in metrics:
                                     try:
-                                        formatted_metrics.append(f"{float(m):.4f}")
+                                        value = float(m)
+                                        formatted_metrics.append(f"{value:.4f}")
+                                        numeric_metrics.append(value)
                                     except:
                                         formatted_metrics.append(m)
+                                        numeric_metrics.append(0)
+                                
+                                # 计算平均值
+                                if numeric_metrics:
+                                    average = sum(numeric_metrics) / len(numeric_metrics)
+                                    formatted_metrics.append(f"{average:.4f}")
+                                else:
+                                    formatted_metrics.append("N/A")
+                                    
                                 table_data.append([model_name] + formatted_metrics)
                             j += 1
                         else:
