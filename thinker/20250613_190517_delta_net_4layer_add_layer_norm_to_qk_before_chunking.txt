@@ -1,0 +1,60 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  delta_net_4layer_add_error_based_sigmoid_gate_to_state_update_in_for_loop  0.438554        0.996988      0.151126  0.378910      0.993787        0.856096
+2    delta_net_4layer_add_exponential_decay_to_S_before_update_in_chunk_loop  0.430250        0.998632      0.174114  0.400849      0.997338        0.950205
+3                  delta_net_4layer_add_momentum_to_state_update_in_for_loop  0.432103        0.994521      0.164317  0.386064      0.992176        0.880826
+4          delta_net_4layer_add_softmax_to_intra_chunk_attention_in_for_loop  0.436064        0.985717      0.160863  0.779965      0.971766        0.951675
+5                                                     gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+
+20250613_190517
+
+--- Insights ---
+Insights
+=========
+Key observations from experiment results
+---------------------------------------
+1. Baseline DeltaNet dominates noisy-robust tasks (≈1.0 Noisy-Recall, ≈0.95 Selective-Copy) but under-performs on capacity-heavy tasks (≈0.44 Compress, ≈0.40 Memorize).
+2. Gated-DeltaNet closes this gap by adding adaptive decay/gating, confirming that *scale control* of the memory interaction is critical.
+3. Historical variants in accuracies_df.csv show:
+   • Exponential decay – uniform dampening → small drop everywhere.
+   • Softmax on intra-chunk attention – big Memorize jump (+0.38) but hurt Fuzzy/Noisy tasks (-0.02-0.03) and lowered Compress.
+   • Momentum on write – minor gains, still below Gated.
+   • Error-based sigmoid gate – severe degradation in Selective-Copy and overall average.
+   These patterns indicate that *how* we regularise scale matters: too blunt (decay) or intrusive (sigmoid gate) harms robustness, whereas *soft* normalisation on the read path helped Memorize but destabilised other tasks.
+
+Specific code issues identified
+------------------------------
+• In the original fla/ops/delta_rule/naive.py the raw query (q) and key (k) vectors can carry large mean shifts and variance drift across a long sequence. Although 1/√d_k scaling is applied later, differing feature distributions between timesteps still yield unstable dot-products, aggravating overwrites (hurting Compress/Memorize) and occasionally exploding gradients (seen as Fuzzy/Noisy drops after the softmax attempt, which made the system very sensitive to logit spread).
+• There is no *feature-wise* normalisation before attention, unlike Transformer’s LayerNorm.  This is a likely source of capacity problems that none of the previous attempts tackled.
+
+Technical reasoning for the proposed change
+------------------------------------------
+Modification: **Per-token Layer Normalisation on Q and K before chunking** (no affine parameters, cheap).
+
+Why it should help
+1. Zero-mean, unit-variance feature vectors → dot-product magnitude becomes length-invariant and sequence-invariant.
+2. Reduces variance in q·k logits without compressing them into a simplex (softmax) – keeps raw causal attention useful for noise robustness while mitigating outliers that caused capacity issues.
+3. Stabilises gradient flow, prevents extreme β-scaled writes, therefore curbs memory saturation that hampers Compress and Memorize.
+4. No additional learnable parameters, negligible compute overhead, does not alter causal ordering; the Delta rule write path remains intact.
+
+Expected improvements
+---------------------
+• Compress: fewer extreme overwrites → expect ≥0.48 (beating Mamba 0.53 after training/finetune).
+• Memorize: cleaner, more uniform key space should raise recall; target ≥0.55, ideally rivalling Gated-DeltaNet.
+• Fuzzy/Noisy Recall & Selective-Copy: because we retain raw attention (no softmax / gating on read or write), robustness should stay ≈baseline or slightly improve due to better scaling.
+• Overall average should exceed both baseline DeltaNet (0.67) and previous best variant (0.70 from Gated-DeltaNet).
+
+Lessons from Historical Attempts
+--------------------------------
+Patterns of successful & unsuccessful approaches
+• Successful: regularising magnitude (softmax on attention, gating in Gated-DeltaNet) can lift capacity tasks.
+• Unsuccessful: global constant decay or hard gating harms noise tasks; changes that disturb causal attention (softmax) can over-normalise and hurt robustness.
+
+How previous analyses informed current thinking
+• We learned that capacity problems stem from scale drift; we also learned that overly aggressive or uneven scaling (softmax) trades one set of tasks for another.  Therefore we opted for *feature-level* normalisation that is milder and acts *before* attention computation.
+
+Consistently promising techniques / optimisations
+• Lightweight, parameter-free operations (gates, decays, norms) placed so they regulate scale without breaking causal logic.
+
+Building upon / diverging from previous approaches
+• Builds on the insight that scale control is needed; diverges by acting at the representation level (LayerNorm) rather than attention weights or write amplitudes.  This preserves DeltaNet’s distinctive error-driven update pathway, aiming for a balanced improvement across all MAD tasks.

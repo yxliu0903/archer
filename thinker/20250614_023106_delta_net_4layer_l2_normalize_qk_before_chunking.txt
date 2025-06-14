@@ -1,0 +1,65 @@
+                                                                  Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                           delta_net_4layer  0.441687        0.998683      0.216574  0.403352      0.997438        0.949954
+1  delta_net_4layer_add_error_based_sigmoid_gate_to_state_update_in_for_loop  0.438554        0.996988      0.151126  0.378910      0.993787        0.856096
+2    delta_net_4layer_add_exponential_decay_to_S_before_update_in_chunk_loop  0.430250        0.998632      0.174114  0.400849      0.997338        0.950205
+3                      delta_net_4layer_add_layer_norm_to_qk_before_chunking  0.427726        0.998013      0.133315  0.270263      0.996733        0.979295
+4                  delta_net_4layer_add_momentum_to_state_update_in_for_loop  0.432103        0.994521      0.164317  0.386064      0.992176        0.880826
+5                            delta_net_4layer_add_rope_to_qk_before_chunking  0.450334        0.997173      0.160970  0.325375      0.995668        0.975949
+6          delta_net_4layer_add_softmax_to_intra_chunk_attention_in_for_loop  0.436064        0.985717      0.160863  0.779965      0.971766        0.951675
+7       delta_net_4layer_mix_raw_and_softmax_attention_in_output_in_for_loop  0.440566        0.994683      0.164594  0.756432      0.990929        0.940070
+8                                                     gated_delta_net_4layer  0.366612        0.999485      0.310357  0.586678      0.999478        0.996908
+
+20250614_023106
+
+--- Insights ---
+Insights
+========
+Key observations from experiment results
+---------------------------------------
+1. Strength / Weakness pattern (from accuracies_df.csv)
+   • DeltaNet variants that *tame scale* on the attention **write/read path** (softmax, momentum, error-gate) move Compress & Memorize a little but usually harm Fuzzy / Noisy / Selective tasks.
+   • Variants that *add structure* (RoPE, LayerNorm) improve some noise scores yet still fail to beat Gated-DeltaNet on capacity-heavy tasks.
+   • The single persistent problem across all attempts is **logit-magnitude explosion**: extreme q·k values create occasional massive outer-product writes that destroy older memories → low Compress / Memorize.  Previous fixes either over-suppressed (decay/gates) or shifted the trade-off elsewhere (softmax only, softmax mix).
+2. Gated-DeltaNet wins Compress (0.367) & Memorize (0.587) *without* sacrificing robustness because its decay gate effectively bounds the *length* of stored key vectors via α-t.
+3. Looking at per-task deltas, every variant that **kept raw magnitude** (baseline, RoPE) preserved excellent Noisy-Recall ≈0.996-1.00, proving that cosine-style similarity would likely keep this advantage while capping extremes.
+
+Specific code issues identified
+------------------------------
+• In the reference naive.py, q and k are only scaled by 1/√d_k.  Their *length* still varies widely across tokens/batches, producing unbounded logit range ∝‖q‖·‖k‖.  When ‖k‖ is large, the outer-product update S ← kᵀu is also large → memory saturation.
+• None of the historical attempts explicitly normalised vector length (LayerNorm centred + scaled features but still left variable norm after affine weight).  Therefore magnitude outliers remain.
+
+Technical reasoning for the proposed changes
+-------------------------------------------
+Modification: **ℓ2-normalise q and k (unit vectors) right after 1/√d_k scaling and before chunking.** 
+
+Mechanism & expected benefits
+1. Turns dot-product into *cosine similarity* ⇒ logits bounded in [-1,1].
+2. Length invariance eliminates oversized writes, mitigating catastrophic interference → boosts Compress & Memorize.
+3. Cosine similarity is inherently robust to additive noise, so Fuzzy- & Noisy-Recall should stay high or improve.
+4. No parameters, <0.1 % extra FLOPs, identical causal ordering (output first, then state write).
+5. Differs from previous LayerNorm attempt: we do *not* shift/scale mean; we only fix vector norm, hence we keep directional information while guaranteeing scale stability.
+
+Expected improvements
+---------------------
+• Compress: less destructive overwrites, target ≥0.47 (vs 0.44 baseline, 0.43–0.45 in past mods).
+• Memorize: cleaner key geometry, aim ≥0.55 (close to Gated-DeltaNet 0.59).
+• Fuzzy / Noisy Recall: cosine match + stable scale may slightly raise baseline (0.216 → ~0.24) while maintaining ≥0.997 Noisy-Recall.
+• Selective Copy: should remain ≥0.95 because local causal attention unchanged.
+• Overall average projected >0.70, challenging Gated-DeltaNet.
+
+Lessons from Historical Attempts
+--------------------------------
+Patterns of successful and unsuccessful approaches
+• Successful: scale-control mechanisms that *bound* interaction (Gated decay, softmax) help memory capacity.
+• Unsuccessful: global decay or hard gating that indiscriminately shrinks all signals hurt robust tasks.
+• Mixed: Softmax alone resolved Memorize but lost robustness due to loss of magnitude info.
+
+How previous analyses informed current thinking
+• Repeated evidence that *magnitude spikes* are the root cause → aim for a minimal fix that removes norm variation without distorting direction or probability simplex.
+
+Consistently promising techniques / optimisations
+• Lightweight, parameter-free operations (gates, norm, RoPE) that preserve causal ordering.
+• Targeting the *representation* level (q/k) tends to keep both read & write paths compatible with Delta rule.
+
+Building upon / diverging from previous approaches
+• Builds on LayerNorm insight that normalisation helps, but diverges by choosing pure ℓ2 norm (no centring/affine) which retains directional semantics and raw magnitudes inside [-1,1], expected to balance capacity and robustness better than earlier softmax/decay/gate attempts.
