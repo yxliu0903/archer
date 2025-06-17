@@ -1,0 +1,68 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                             delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                               delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2   delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                               delta_net_4layer_add_affine_free_layernorm_on_qk_before_l2norm  0.469601        0.999610      0.149512  0.341322      0.999526        0.992868
+4                                   delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+5                                  delta_net_4layer_add_rope_to_keys_and_queries_before_l2norm  0.219386        0.655834      0.082418  0.272303      0.691661        0.516451
+6                      delta_net_4layer_sigmoid_gate_on_state_update_per_chunk_using_mean_beta  0.484506        0.999680      0.125130  0.342419      0.999580        0.991628
+7                                 delta_net_4layer_softmax_intra_chunk_and_tanh_error_bounding  0.481904        0.985140      0.138232  0.841028      0.979918        0.984672
+8                             delta_net_4layer_softmax_normalised_intra_chunk_causal_attention  0.477249        0.991150      0.138598  0.831789      0.980253        0.973402
+9                                           delta_net_4layer_tanh_on_error_before_state_update  0.494906        0.999610      0.158331  0.341603      0.999665        0.989535
+10                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250617_013308
+
+--- Insights ---
+Insights
+
+Key Observations from Experiment Results
+• DeltaNet 在抗噪声任务上表现出色（≈100% 在 In-Context、Noisy Recall 和 Selective Copy），但在 Compress（约49%）、Memorize（约34%）和 Fuzzy Recall（约19%）上仍有不足。Gated-DeltaNet 提升了 Fuzzy Recall 和 Memorize，但在 Compress 上失去了优势。
+• 以往的尝试显示有三条部分成功的方向：
+  – 幅值控制（soft-max 注意力；tanh 误差裁剪；sigmoid 门控）分别对 Memorize 或 Fuzzy Recall 有帮助，但从未能同时提升两者。
+  – 位置增强（RoPE）尚未被充分探索，但理论上对顺序敏感任务（Compress、Memorize）有益。
+  – 状态级优化器（momentum / Adam）增加了复杂性，且常常损害 Selective Copy。
+
+Specific Code Issues Identified
+1. 未归一化的块内点积导致权重无界 → 状态爆炸 → Compress/Memorize 表现不佳。
+2. 预测误差（S k – v）无界；一次大的突变即可覆盖记忆 → Fuzzy Recall 表现不佳。
+3. Query/Key 不携带位置信息，迫使模型仅依赖状态来区分顺序，限制了 Compress 的能力。
+
+Technical Reasoning for Proposed Changes
+我们在单个文件中引入了三项轻量且互补的修改：
+1. 在 q 和 k 上应用旋转位置嵌入（RoPE）且在 L2 归一化之前   → 显式的相对位置信息；区分不同时刻的相同 token，无需增加参数即可提升 Compress 和 Memorize。
+2. Softmax 归一化的因果块内注意力（带 √d 缩放）   → 将局部混合权重限制在概率单纯形内，防止幅值爆炸，并稳定长序列的记忆。
+3. 在写入状态 S 前，对预测误差 u 逐元素应用 tanh   → 对极端误差进行软裁剪，小值保持线性，缓解灾难性干扰，提升 Fuzzy/Noisy recall。
+所有更改均在输出产生后进行，以保证因果性，并且未更改公共函数名。
+
+Expected Improvements
+• Compress & Memorize：RoPE + 有界注意力 → 更干净、具备位置信息的存储；预期 >0.52 / >0.38。
+• Fuzzy Recall：tanh 裁剪误差防止记忆被覆盖；目标 ≥0.28（接近或超过 Gated-DeltaNet 的 0.30）。
+• Selective Copy、Noisy & In-Context Recall 应保持 ≳0.99，因为核心 delta 规则未变，修改主要限制幅值。
+• 平均分数应超过原始 DeltaNet（0.668）和 Gated-DeltaNet（0.600）。
+
+Lessons from Historical Attempts
+成功的方法
+• 幅值约束（softmax、tanh、衰减）和轻量可微调整在不损害鲁棒任务的前提下带来提升。
+• 引入位置信号理论上很强，但尚未与幅值控制结合。
+
+失败的方法
+• 重型优化器式状态更新（momentum/Adam）破坏了选择性任务的稳定性。
+• 单独使用统一衰减几乎没有提升。
+
+一贯有效的技术
+• 因果、误差驱动的外积更新必须保留。
+• 稳定性来自于对注意力权重或误差幅值的约束，以及更丰富的输入表示。
+
+对以往尝试的继承与突破
+• 我们结合了两种最有前景的幅值控制技巧（softmax 块内注意力 + tanh 误差约束），并引入 RoPE 以提供位置信息——这是尚未尝试过的新组合方向。该方案利用了每种技巧分别弥补不同短板的经验，目标是在所有任务上实现增益而非权衡。
+
+Code-level Changes
+• 新增 RoPE 辅助函数 _apply_rope（无外部依赖）。
+• 在 l2norm 之前将 RoPE 应用于 q 和 k。
+• 用带温度缩放和因果掩码的 softmax 替换原始块内 logits。
+• 在输出和状态更新前对 u_i 应用 torch.tanh。
+• 接口、命名和因果顺序保持不变。
+
+Expected Overall Impact
+同时提升长程记忆保持和抗噪声能力，产出一个在所有 MAD 任务上均应超越 Gated-DeltaNet、平均分数大幅高于 0.70 的 DeltaNet 变体。

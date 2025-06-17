@@ -9,7 +9,7 @@ st.title("🧪 MAD Lab 分析文件查看器")
 
 
 # 分析文件目录
-analysis_dir = './thinker'
+analysis_dir = './thinker_zh'
 
 # 获取所有txt文件
 txt_files = glob.glob(os.path.join(analysis_dir, '*.txt'))

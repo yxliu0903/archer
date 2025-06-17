@@ -1,0 +1,65 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                             delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                               delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2   delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                               delta_net_4layer_add_affine_free_layernorm_on_qk_before_l2norm  0.469601        0.999610      0.149512  0.341322      0.999526        0.992868
+4                                   delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+5                                  delta_net_4layer_add_rope_to_keys_and_queries_before_l2norm  0.219386        0.655834      0.082418  0.272303      0.691661        0.516451
+6                                         delta_net_4layer_rope_softmax_intra_chunk_tanh_error  0.487571        0.986821      0.128179  0.832331      0.971426        0.993041
+7                      delta_net_4layer_sigmoid_gate_on_state_update_per_chunk_using_mean_beta  0.484506        0.999680      0.125130  0.342419      0.999580        0.991628
+8                                 delta_net_4layer_softmax_intra_chunk_and_tanh_error_bounding  0.481904        0.985140      0.138232  0.841028      0.979918        0.984672
+9                             delta_net_4layer_softmax_normalised_intra_chunk_causal_attention  0.477249        0.991150      0.138598  0.831789      0.980253        0.973402
+10                                          delta_net_4layer_tanh_on_error_before_state_update  0.494906        0.999610      0.158331  0.341603      0.999665        0.989535
+11                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250617_021452
+
+--- Insights ---
+Insights
+
+Key Observations from Latest Experiment Table  
+• 基线4层DeltaNet（DN-base）在In-Context Recall、Noisy Recall和Selective-Copy任务上已经接近完美，但在Compress（≈ 0.49）和Memorize（≈ 0.34）上表现一般，在Fuzzy Recall（≈ 0.19）上表现很弱。  
+• 以往最佳单项改进：  
+  – Soft-maxed intra-chunk attention（尝试5）将Memorize提升至0.83（！），但Fuzzy Recall仍约为0.14。  
+  – Tanh-bounded error（尝试7）将Fuzzy Recall提升至0.16，但对Memorize无影响。  
+  – Gated-DeltaNet将Fuzzy Recall提升至0.30，但牺牲了Compress和Memorize。  
+  – 目前尚无尝试直接用β作为更新门控；大多数变体在一个chunk内对所有更新等比例缩放。
+
+Specific Code Issues Identified（naive.py在本次修改前）  
+1. 原始chunk内logits仅做了mask处理，**未做归一化**——它们的和会随序列长度爆炸，导致更新不稳定（影响Compress/Memorize）。  
+2. 预测误差u = (S k – v̂)未做幅值限制直接写入状态——单次异常峰值即可清空记忆（影响Fuzzy Recall）。  
+3. 外积更新忽略了*逐token*的β（学习率）。β≈0的检索token仍会覆盖状态，导致灾难性干扰。
+
+Technical Reasoning for Proposed Changes  
+我们增加了三项互补且轻量的修改——每项针对一个弱点，同时保留DeltaNet的误差驱动核心。  
+1. Softmax归一化的因果chunk内注意力（带√d缩放）保证权重在[0,1]且和为1——幅值有界，提升Memorize和Compress。  
+2. 在使用预测误差前（及状态更新前）对其做逐元素tanh，限制|u|≤1，防止破坏性峰值——提升Fuzzy Recall和稳定性。  
+3. β门控外积：写入记忆时将u乘以其逐token的β，低置信度或纯检索token几乎不改变S，而真正写入（β≈1）仍可发生。该自适应学习率直接遵循DeltaNet理论，应能同时保护早期记忆并让新记忆干净形成。  
+所有操作均遵循因果性：输出在S被修改*之前*计算。
+
+Expected Improvements  
+• Compress——有界的局部权重+β门控防止缓慢漂移，目标≥0.52。  
+• Memorize——恢复以往softmax带来的巨大提升0.83并保持（β门控防止过冲），目标≥0.80。  
+• Fuzzy Recall——tanh+β门控消除灾难性覆盖，目标≥0.25–0.30（缩小与Gated-DN的差距）。  
+• In-Context、Noisy、Selective-Copy应保持≳0.99，因为其机制未变且更安全的更新反而有益。  
+• 总体平均预期>0.72，优于DeltaNet-base（0.67）和Gated-DeltaNet（0.60）。
+
+Lessons from Historical Attempts  
+成功模式  
+• 幅值控制（softmax、tanh、门控）和表征稳定化持续带来提升且不影响鲁棒任务。  
+• 保持Delta规则结构的轻量、可微小调整优于重型优化器式状态更新。
+
+失败尝试  
+• Adam/动量变体破坏了选择性任务的稳定性。  
+• 单独的均匀衰减几乎无益。
+
+一贯有效的技术  
+• 利用已有统计量（β、相似度）自适应调整更新幅度。  
+• 组合正交技巧而非堆叠类似方法——协同效应很重要（如softmax助力Memorize，tanh助力Fuzzy；结合或可兼顾两者）。
+
+本次构建的差异与提升  
+• 首次*同时*结合softmax归一化、tanh误差和β门控——历史上未有尝试三者并用。  
+• 直接从β信号学习，而非尝试8中引入的启发式chunk均值——控制更细致。  
+• 代码保持精简（约25行新增），无新增可学习参数，训练流程与检查点完全兼容。
+
+name

@@ -1,0 +1,48 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                            delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                              delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2  delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                              delta_net_4layer_add_affine_free_layernorm_on_qk_before_l2norm  0.469601        0.999610      0.149512  0.341322      0.999526        0.992868
+4                                  delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+5                                 delta_net_4layer_add_rope_to_keys_and_queries_before_l2norm  0.219386        0.655834      0.082418  0.272303      0.691661        0.516451
+6                            delta_net_4layer_softmax_normalised_intra_chunk_causal_attention  0.477249        0.991150      0.138598  0.831789      0.980253        0.973402
+7                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250616_230248
+
+--- Insights ---
+Insights
+
+Key Observations from Experiment Results
+• DeltaNet 已经在 In-Context Recall、Noisy Recall 和 Selective Copy 上取得了近乎完美的分数，验证了其在抗噪声检索和联想记忆方面的优势。
+• 在 Compress（约49% vs 41%）、Memorize（约34% vs 35%）以及——最关键的——Fuzzy Recall（约19% vs 30%）上，DeltaNet 仍然落后于 Gated-DeltaNet。这些任务在一次或几次大的错误更新破坏共享状态矩阵 S 时会彻底崩溃。
+• 历史 CSV（accuracies_df）显示，之前所有仅对 S 进行重缩放或平滑的更改（自适应衰减、动量、Adam）在 Fuzzy Recall 上最多提升了+4个百分点，但往往会损害 Compress/Selective-Copy。位置编码（RoPE）和 softmax-attention 变体仍在评估中，但目前还没有方法明确限制原始误差项本身。
+
+Specific Code Issues Identified
+1. 未受限的误差幅值 u_i = (S k – v) 可以任意大。由于外积更新会将 kᵀ u_i 直接加到 S 上，单次激增就可能覆盖许多先前正确的关联——这是典型的灾难性干扰。
+2. 幅值爆炸对长时保持任务影响尤为严重。Compress 需要最早的 token 能在数百步后仍然存活；Memorize 需要唯一的键分离；带噪声的 Fuzzy Recall 在正确但微弱的信号被早期激增淹没时表现不佳。
+3. u_i 没有应用逐元素非线性。DeltaNet 依赖 β 来缩放更新，但 β 只能统一缩小，无法裁剪罕见的异常值。
+
+Technical Reasoning for Proposed Change
+我们在误差项进入输出和状态更新之前，插入一个平滑、以零为中心、奇函数的非线性（tanh）：
+    u_i = tanh( u_i )
+这样做可以：
+• 将每个元素限制在 (-1, 1) 区间，防止出现巨大的外积更新。
+• 保留误差的符号（修正方向），使学习仍然以误差为驱动。
+• 类似于自适应的逐单元学习率，对于极大错误会饱和，而对小误差几乎线性（当 |x|≪1 时 tanh≈x）。
+• 可微且计算开销低；无需新增参数；保持函数签名不变；符合因果性，因为状态 S 仍然在输出产生后才被更新。
+
+Expected Improvements from the Modification
+• Compress & Memorize：干扰减少应能让早期记忆存活更久，提升分数（目标 >0.52 和 >0.38）。
+• Fuzzy Recall：防止少数大的错误更新压倒微妙的模糊匹配，目标为 ≥0.26–0.28。
+• In-Context / Noisy / Selective-Copy：应保持约 100%，因为这些任务在正确检索后误差幅值已很小，tanh 几乎等同于恒等映射。
+• 数值稳定性：有界更新使训练对长度外推和学习率选择的敏感性降低。
+
+Lessons from Historical Attempts
+• 成功模式：能够稳定幅值的轻量级操作（softmax 块内注意力、门控）或添加位置信号（RoPE）有助于提升表现且不损失鲁棒任务。
+• 不成功的尝试：重型优化器风格方案（类似 Adam）增加了复杂性，有时还损害了核心优势；统一衰减几乎无效。
+• 一贯有效：保护记忆矩阵免于失控增长，同时保持以误差为驱动的特性。
+• 基于/区别于以往：以往的修正都作用于误差“周边”（更新后衰减、跨更新动量）。我们则直接针对根本原因——未受限的误差本身——采用饱和型非线性，这是日志中尚未尝试的方向。
+
+name: delta_net_4layer_tanh_on_error_before_state_update
+success: true

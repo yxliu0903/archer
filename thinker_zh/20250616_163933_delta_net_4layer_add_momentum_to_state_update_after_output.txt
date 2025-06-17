@@ -1,0 +1,46 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                            delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1  delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+2                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250616_163933
+
+--- Insights ---
+Insights
+
+Key Observations from Latest Results (accuracies_df.csv)
+• 原始 DeltaNet：在 In-Context、Noisy 和 Selective-Copy 任务上表现近乎完美（≈1.0），但在 Compress（0.49）和 Memorize（0.34）上表现较弱；在 Fuzzy Recall 上表现一般（0.19）。
+• 先前尝试（自适应指数衰减）仅略微提升了 Compress（+0.001）和 Memorize（+0.004），但对 Fuzzy Recall 的提升（+0.015）也非常有限——基本进入平台期。
+• Gated-DeltaNet 以牺牲部分噪声鲁棒性为代价，换来了更好的 Compress（0.41）和 Memorize（0.35），以及显著提升的 Fuzzy Recall（0.30）。
+观察：主要的提升空间仍在 Compress & Memorize（约 0.10–0.15）以及 Fuzzy Recall（约 0.11）。这些任务受干扰/高方差状态更新影响较大。
+
+Specific Code Issues Identified (naive.py)
+1. 高方差的外积更新（kᵀu）每个块都直接写入 S。单次噪声错误可能会覆盖稳定的关联。
+2. 缺乏时间平滑：误差项被立即应用；重复模式不会比瞬时噪声获得更多强调。
+3. 缺少跨块累积证据的机制——与基于动量的优化器对参数的处理方式相反。
+
+Technical Reasoning for Proposed Change
+我们引入了带有指数移动平均的动量缓冲区 M：
+    M_t = μ·M_{t-1} + (1−μ)·ΔS_t        (μ≈0.9)
+    S_t = S_{t-1} + M_t
+其中 ΔS_t = k_i^⊤ @ u_i（标准 DeltaNet 误差投影）。
+原理说明：
+• 对每个块的误差进行低通滤波，使一致的关联得以累积，同时抑制异常值——有利于 Fuzzy Recall 和 Memorize。
+• 仍然保持 DeltaNet 的误差驱动特性，但动态更加平滑，类似于 SGD-Momentum / Adam。
+• 实现简单（仅需几行代码）且可微分；除标量 μ 外无额外参数。
+• 保持因果性：输出 o_i 在 M/S 更新前计算。
+预期改进
+• Fuzzy Recall：单个噪声 key 的干扰减少，预期 ≥0.25。
+• Memorize & Compress：一致性更新的累积提升远程记忆保持，目标 ≥0.38 / ≥0.52。
+• 噪声鲁棒任务保持 ≥0.99；动量不会影响误差项符号。
+
+Lessons from Historical Attempts
+成功模式：
+• 误差驱动的外积至关重要。
+• 受控遗忘（门控/衰减）提升了 Compress，但可能损害模糊性。
+不成功/进入平台期的做法：
+• 纯衰减作用均匀，无法区分瞬时与持久信息。
+有前景的技术：
+• 基于误差统计的自适应机制；通过平滑更新而非直接抹除。
+继承与分歧：
+• 我们将衰减思想隐含在动量中（旧更新以 μ 衰减）。不再全局抹除 S，而是对更新取平均——既缓解了振荡，又保留了长期记忆。这与之前的预测前衰减方法不同，引入了受 TTT 启发的优化动态，但无需昂贵的梯度步骤。

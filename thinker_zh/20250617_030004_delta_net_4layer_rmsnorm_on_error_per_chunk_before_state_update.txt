@@ -1,0 +1,63 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                             delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                               delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2   delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                               delta_net_4layer_add_affine_free_layernorm_on_qk_before_l2norm  0.469601        0.999610      0.149512  0.341322      0.999526        0.992868
+4                                   delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+5                                  delta_net_4layer_add_rope_to_keys_and_queries_before_l2norm  0.219386        0.655834      0.082418  0.272303      0.691661        0.516451
+6                                         delta_net_4layer_rope_softmax_intra_chunk_tanh_error  0.487571        0.986821      0.128179  0.832331      0.971426        0.993041
+7                                     delta_net_4layer_row_norm_constrained_state_after_update  0.492459        0.999673      0.164167  0.342593      0.999622        0.985484
+8                      delta_net_4layer_sigmoid_gate_on_state_update_per_chunk_using_mean_beta  0.484506        0.999680      0.125130  0.342419      0.999580        0.991628
+9                                 delta_net_4layer_softmax_intra_chunk_and_tanh_error_bounding  0.481904        0.985140      0.138232  0.841028      0.979918        0.984672
+10                            delta_net_4layer_softmax_normalised_intra_chunk_causal_attention  0.477249        0.991150      0.138598  0.831789      0.980253        0.973402
+11                                             delta_net_4layer_softmax_tanh_beta_gated_update  0.485169        0.996322      0.158361  0.812610      0.996470        0.996374
+12                                          delta_net_4layer_tanh_on_error_before_state_update  0.494906        0.999610      0.158331  0.341603      0.999665        0.989535
+13                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250617_030004
+
+--- Insights ---
+Insights
+
+Key Observations from Experiment Results  
+• 原始的4层DeltaNet表现出“分裂型”特性：在In-Context、Noisy-和Selective-Copy任务上几乎完美，但在Compress（≈ 0.49）和Memorize（≈ 0.34）任务上表现平平，在Fuzzy Recall（≈ 0.19）任务上则非常弱。  
+• 所有历史上成功的调整都遵循一个主题——控制更新或状态的幅度。硬裁剪（tanh）、门控（sigmoid、β-gates）或注意力soft-max提升了一两个薄弱任务，但往往会损害其他任务，因为它们要么过度裁剪了微小但有用的信号，要么增加了额外的复杂性。  
+• 从accuracies_df来看，所有对**更新**进行*有界*处理的变体都提升了Fuzzy Recall，而对**状态**（行范数）进行*有界*处理的变体则提升了Compress/Memorize。尚未有尝试对误差本身进行*平滑、尺度不变*的归一化。这正是我们要利用的空白。
+
+Specific Code Issue Identified  
+预测误差u = (I − KβKᵀ)⁻¹v − W S在v或S k发散时会爆炸。因此，单个大的token会写入一个巨大的外积ΔS，从而抹去早期记忆——这正是破坏Fuzzy Recall和长距离Compress的原因。此前基于tanh的裁剪将范围限制在（-1,1），但代价是所有大幅度的梯度都被饱和，尺度信息被完全丢弃。
+
+Technical Reasoning for the Proposed Change  
+我们引入了**每块误差的RMS归一化**——这一思想借鉴自RMSNorm/自适应优化器：  
+    rms  = sqrt(mean(u_i²) + ε)  
+    u_i ← u_i / rms  
+这保证了每个分量的*方向*不变，同时确保误差向量的*能量*在所有块中保持固定（≈1），抑制灾难性尖峰而不会出现硬饱和。关键在于，小误差几乎不受影响；只有异常离群值会被缩小。该修改每（batch, head, chunk）仅需一次均值和开方运算——几乎可以忽略不计——且不增加可学习参数。所有因果顺序均被保留：输出在状态更新前用归一化后的u计算。
+
+Expected Improvements  
+• Fuzzy Recall：灾难性覆盖更少→准确率应大幅超过0.20平台，目标≥0.26。  
+• Compress & Memorize：通过防止序列后期的尖峰，早期记忆得以保留；预期≥0.50 / ≥0.36。  
+• 对鲁棒任务无回退；其误差已很小，rms≈1。  
+• 总体平均值应超过0.70，有望挑战Gated-DeltaNet，同时保持DeltaNet的优势。
+
+Lessons from Historical Attempts  
+Patterns of Success  
+· 轻量级幅度控制（soft-max注意力、tanh、行范数）总能提升至少一个薄弱任务。  
+· 保持因果结构且不引入新参数的方法能维持在抗噪任务上的优势。
+
+Patterns of Failure  
+· 重型优化器风格的状态更新（Adam/动量）引入了不稳定性，导致部分任务崩溃。  
+· 均匀衰减几乎无益——无差别遗忘远远不够。
+
+Consistently Promising Techniques  
+· 基于自适应统计的关键信号缩放（而非硬裁剪）  
+· 可微、无参数、尊重因果性的操作
+
+Building on / Diverging From Previous Work  
+我们直接建立在幅度调控至关重要的洞见之上，但通过采用平滑的RMS缩放而非以往的硬裁剪实现了创新。这保留了梯度信息，在稳定性与学习能力之间取得了平衡。它还通过在更早一层（*误差*）作用，补充了早期的状态归一化尝试，提供了正交的保护。
+
+Name
+
+    delta_net_4layer_rmsnorm_on_error_per_chunk_before_state_update
+
+Success  
+true

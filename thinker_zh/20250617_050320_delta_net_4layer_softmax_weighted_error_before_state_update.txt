@@ -1,0 +1,68 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                             delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                               delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2   delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                               delta_net_4layer_add_affine_free_layernorm_on_qk_before_l2norm  0.469601        0.999610      0.149512  0.341322      0.999526        0.992868
+4                                   delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+5                                  delta_net_4layer_add_rope_to_keys_and_queries_before_l2norm  0.219386        0.655834      0.082418  0.272303      0.691661        0.516451
+6                              delta_net_4layer_rmsnorm_on_error_per_chunk_before_state_update  0.459677        0.997880      0.130849  0.341811      0.996414        0.971792
+7                                         delta_net_4layer_rope_softmax_intra_chunk_tanh_error  0.487571        0.986821      0.128179  0.832331      0.971426        0.993041
+8                                     delta_net_4layer_row_norm_constrained_state_after_update  0.492459        0.999673      0.164167  0.342593      0.999622        0.985484
+9                      delta_net_4layer_sigmoid_gate_on_state_update_per_chunk_using_mean_beta  0.484506        0.999680      0.125130  0.342419      0.999580        0.991628
+10                                delta_net_4layer_softmax_intra_chunk_and_tanh_error_bounding  0.481904        0.985140      0.138232  0.841028      0.979918        0.984672
+11                            delta_net_4layer_softmax_normalised_intra_chunk_causal_attention  0.477249        0.991150      0.138598  0.831789      0.980253        0.973402
+12                          delta_net_4layer_softmax_rmsnorm_error_row_norm_state_after_update  0.470293        0.995246      0.135299  0.541736      0.981044        0.979639
+13                                             delta_net_4layer_softmax_tanh_beta_gated_update  0.485169        0.996322      0.158361  0.812610      0.996470        0.996374
+14                                          delta_net_4layer_tanh_on_error_before_state_update  0.494906        0.999610      0.158331  0.341603      0.999665        0.989535
+15                                  delta_net_4layer_topk25_sparsify_error_before_state_update  0.445598        0.999629      0.188958  0.352690      0.999397        0.991736
+16                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250617_050320
+
+--- Insights ---
+Insights
+
+Key Observations from Experiment Results (CSV)
+• 原始 DeltaNet 在 In-Context（≈1.00）、Noisy Recall（≈1.00）和 Selective-Copy（≈0.99）任务上表现出色，但在 Compress（0.49）和 Memorize（0.34）上表现一般，在 Fuzzy Recall（0.19）上表现很弱。
+• 以往通过限制更新幅度的尝试（softmax attention、tanh-clip、RMSNorm、row-norm）各自改善了某一弱点，但通常会损害另一项。最佳 Memorize（0.83）来自对块内注意力的 softmax，而最佳 Fuzzy-Recall（~0.20）则来自误差/行归一化。
+• 目前尚无实验解决 *误差向量本身是稠密的* 这一事实：即使是极小的不相关维度也会写入 S 的每一行/列。这种跨维度干扰是 Compress、Memorize 和 Fuzzy-Recall 残余失败的主要嫌疑。
+
+Specific Code Issues Identified in previous naive.py
+1. 误差向量 u_i 被写入状态时未进行任何按维度的重要性筛选 → 稠密更新，产生干扰。
+2. 以往的修复要么对整个向量进行裁剪（tanh），要么通过硬 Top-k 稀疏化（attempt-15），这会损害依赖更柔和信号的任务。
+3. 需要一种*平滑、可微分*的机制，将更新聚焦于显著的误差维度，同时保留微小但有用的信号。
+
+Technical Reasoning for Proposed Change
+新方法：对每个（batch, head, position）按值维度对误差进行 softmax 加权。
+    weights  = softmax(|u_i|) * d_v         # 和 ≈ d_v，强调绝对误差较大的维度
+    û_i     = u_i * weights               # 保持符号，按显著性缩放
+优点
+• 平滑（无硬阈值）、可微分、在所有位置都保留梯度。
+• 放大真正错误的维度，缩小几乎正确的维度 → 外积更聚焦，干扰更少。
+• 与以往的幅度限制正交；作用于误差向量内部（此前未尝试过的层级）。
+• 无新增可学习参数，计算量极小（softmax 仅在 ≤64 维上）。
+
+Expected Improvements
+• Compress：累积的无关维度更少 ⇒ >0.52。
+• Memorize：聚焦更新，类似 softmax-attention，但无其副作用 ⇒ ≥0.38 且更稳定。
+• Fuzzy Recall：大幅错误的维度仍被纠正，小幅正确的维度得以保留 ⇒ ≥0.25。
+• 鲁棒性任务应保持 ≳0.99，因为正确误差已接近零；加权近似恒等。
+
+Lessons from Historical Attempts
+成功模式
+– 任何局部化或限制更新幅度的技术，至少能改善一项薄弱任务。
+– 轻量级、无参数且遵循因果性的操作能保持 DeltaNet 的优势。
+
+失败模式
+– 硬裁剪（tanh）抹杀了微妙信号；硬 Top-k 降低了 Fuzzy Recall。
+– 类优化器方法（Adam/momentum）增加了复杂性并破坏了鲁棒性任务的稳定性。
+
+一贯有效的技术
+– 利用已有统计量（|u|）自适应缩放更新。
+– 关注在 S 中*写入的位置*，不仅仅是*写入的量*。
+
+How Current Change Builds on History
+• 将局部化思想从注意力权重（Attempt-5）转移到误差向量本身——一个全新维度。
+• 提供平滑加权而非硬掩码，旨在保留 Top-k 或 tanh 所见优点而无其权衡。
+
+Name

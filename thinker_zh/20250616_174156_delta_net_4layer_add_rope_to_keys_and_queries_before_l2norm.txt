@@ -1,0 +1,47 @@
+Unnamed: 0  Compress  Context Recall  Fuzzy Recall  Memorize  Noisy Recall  Selective Copy
+0                                                                            delta_net_4layer  0.487037        0.999515      0.189705  0.337827      0.999640        0.990733
+1                              delta_net_4layer_adam_style_adaptive_state_update_after_output  0.086029        0.028959      0.011394  0.051220      0.009702        0.119096
+2  delta_net_4layer_adaptive_exponential_decay_on_state_before_and_after_prediction_per_chunk  0.487829        0.999464      0.204738  0.341556      0.999550        0.990712
+3                                  delta_net_4layer_add_momentum_to_state_update_after_output  0.483462        0.998907      0.126505  0.342439      0.997767        0.962976
+4                                                                      gated_delta_net_4layer  0.408180        0.999918      0.303293  0.354294      0.999928        0.999304
+
+20250616_174156
+
+--- Insights ---
+Key Observations from Experiment Results  
+实验结果的关键观察
+
+• DeltaNet 基线（delta_net_4layer）在上下文敏感/噪声任务上表现优异（在 In-Context、Noisy、Selective-Copy 上约为 1.0），但在 Compress（0.49）、Memorize（0.34）和 Fuzzy Recall（0.19）任务上表现较差。  
+• 过去的两类改进方法——自适应衰减（Attempt-1）和动量/Adam 风格优化（Attempts-2 & 3）——仅涉及了记忆状态更新 S。它们对更新进行了轻微平滑或缩放，但在 Compress/Memorize 上仅带来微小提升（<0.01），有时还会对其他任务产生负面影响（动量将 Selective-Copy 降至 0.96，Adam 变体则完全失效）。  
+• Gated-DeltaNet 引入了显式位置衰减，提升了 Compress 和 Memorize 的表现，但以牺牲部分噪声鲁棒性为代价。这表明 DeltaNet *缺乏显式位置线索* 限制了其在顺序相关任务上的能力。
+
+Specific Code Issues Identified  
+发现的具体代码问题
+
+1. 表示对绝对位置不敏感：q 和 k 虽经 L2 归一化，但不携带显式位置信号，因此外积记忆难以区分出现在不同时间步的相同 token。  
+2. 状态中心化调整已达极限：以往的调整仅调制 S，收益已趋于平台期。新的方向应丰富*输入*，而非进一步微调状态动态。  
+3. 引入位置嵌入无额外开销：代码已处理完整的 q/k 张量，插入旋转相位在数学上开销极小且保持张量形状不变。
+
+Technical Reasoning for Proposed Change — Rotary Positional Embeddings (RoPE)  
+拟议变更的技术理由——旋转位置嵌入（RoPE）
+
+• 在 L2 归一化*之前*，将正弦相位旋转注入 q 和 k。RoPE 通过复数旋转同时编码相对和绝对位置信息，与点积相似性天然兼容。  
+• 具备顺序感知的 key/query 使得 delta-rule 能为不同位置的相同 token 形成独立的记忆痕迹——这对于 Compress（需精确还原顺序）和 Memorize（需区分乱序 key）至关重要。  
+• RoPE 与以往的衰减/优化器思路正交；它不改变 ∆-rule 数学和状态更新，因此保留了 DeltaNet 的噪声鲁棒特性。  
+• 计算开销：仅需两次 sin/cos 查表和少量融合乘法——相较整体矩阵乘法可忽略不计，且完全兼容 Torch 编译。
+
+Expected Improvements  
+预期改进
+
+• Compress：更丰富的位置信号 → 更高的重构精度（目标 >0.52，超越 Gated）。  
+• Memorize & Selective-Copy：更好地区分 key 位置，减少冲突。  
+• Fuzzy Recall：位置编码可能略微提升扰动 key 的匹配能力。  
+• 对噪声任务无性能回退——核心的误差驱动机制保持不变。
+
+Lessons from Historical Attempts  
+历史尝试的经验教训
+
+• 成功经验：受控遗忘（Gated）和轻微平滑（自适应衰减）带来小幅提升——记忆干扰确实重要。  
+• 失败经验：重度优化器风格更新（Adam 变体）可能导致不稳定并使分数大幅下降。  
+• 一贯有效的技术：轻量、可微分的调整，尊重因果性并保持高精度任务表现。  
+• 当前的分歧：不再继续调整 S，而是通过位置相位丰富*表示*，将 DeltaNet 强大的联想记忆与显式顺序编码结合。这一做法基于这样的洞见：记忆质量不仅取决于更新规则，还取决于 key 的可分辨性。
