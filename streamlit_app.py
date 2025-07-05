@@ -210,6 +210,9 @@ def build_tree_structure(nodes: List[Dict]) -> Optional[Dict]:
     if not nodes:
         return None
     
+    # 添加调试信息
+    st.write(f"🔍 调试信息: 总共有 {len(nodes)} 个节点")
+    
     # 创建节点映射
     node_map = {}
     for node in nodes:
@@ -218,17 +221,83 @@ def build_tree_structure(nodes: List[Dict]) -> Optional[Dict]:
             'children': []
         }
     
+    # 分析所有节点的parent信息
+    parent_info = {}
+    root_candidates = []
+    
+    for node in nodes:
+        parent = node.get('parent')
+        parent_info[node['index']] = parent
+        
+        # 判断根节点的条件
+        if parent is None or parent == 0 or parent == node['index']:
+            root_candidates.append(node['index'])
+        elif parent not in node_map:
+            # 父节点不存在，也可能是根节点
+            root_candidates.append(node['index'])
+    
+    # 调试信息
+    st.write(f"🔍 父节点信息: {parent_info}")
+    st.write(f"🔍 根节点候选: {root_candidates}")
+    
     # 构建父子关系
     root = None
+    orphaned_nodes = []  # 孤立节点
+    
     for node in nodes:
-        if node['parent'] is None or node['parent'] == 0 or node['parent'] not in node_map:
-            # 根节点
-            root = node_map[node['index']]
+        parent_id = node.get('parent')
+        
+        if node['index'] in root_candidates:
+            # 这是根节点候选
+            if root is None:
+                root = node_map[node['index']]
+                st.write(f"🌳 选择节点 {node['index']} 作为根节点")
+            else:
+                # 有多个根节点，选择index最小的作为真正的根节点
+                if node['index'] < root['index']:
+                    # 将之前的根节点作为新根节点的子节点
+                    old_root = root
+                    root = node_map[node['index']]
+                    root['children'].append(old_root)
+                    st.write(f"🌳 更换根节点为 {node['index']}，原根节点 {old_root['index']} 成为子节点")
+                else:
+                    # 将当前节点作为根节点的子节点
+                    root['children'].append(node_map[node['index']])
+                    st.write(f"🌳 节点 {node['index']} 成为根节点的子节点")
         else:
-            # 子节点
-            parent = node_map.get(node['parent'])
+            # 这是子节点
+            parent = node_map.get(parent_id)
             if parent:
                 parent['children'].append(node_map[node['index']])
+                st.write(f"🔗 节点 {node['index']} 连接到父节点 {parent_id}")
+            else:
+                orphaned_nodes.append(node['index'])
+                st.write(f"⚠️ 节点 {node['index']} 的父节点 {parent_id} 不存在")
+    
+    # 处理孤立节点
+    if orphaned_nodes:
+        st.write(f"🔍 发现 {len(orphaned_nodes)} 个孤立节点: {orphaned_nodes}")
+        if root:
+            # 将孤立节点作为根节点的子节点
+            for orphan_id in orphaned_nodes:
+                root['children'].append(node_map[orphan_id])
+                st.write(f"🔗 孤立节点 {orphan_id} 连接到根节点")
+    
+    if root:
+        # 统计树的结构
+        def count_tree_nodes(node):
+            count = 1
+            for child in node.get('children', []):
+                count += count_tree_nodes(child)
+            return count
+        
+        total_nodes_in_tree = count_tree_nodes(root)
+        st.write(f"🌳 树结构构建完成: 根节点 {root['index']}, 树中总节点数 {total_nodes_in_tree}")
+        
+        if total_nodes_in_tree != len(nodes):
+            st.warning(f"⚠️ 树中节点数({total_nodes_in_tree})与原始节点数({len(nodes)})不匹配")
+    else:
+        st.error("❌ 未能找到根节点")
     
     return root
 
