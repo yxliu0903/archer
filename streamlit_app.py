@@ -687,13 +687,13 @@ def main():
                                         </div>
                                         <div style="margin-top: 15px;">
                                             <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} 详细信息</h3>
-                                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                                                <div><strong>名称:</strong> {clicked_node.get('name', '未知')}</div>
-                                                <div><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
-                                                <div><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
-                                                <div><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
-                                                <div><strong>评分:</strong> {clicked_node.get('score', '无数据')}</div>
-                                                <div><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
+                                            <div style="margin-bottom: 15px;">
+                                                <div style="margin-bottom: 8px;"><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
+                                                <div style="margin-bottom: 8px;"><strong>名称:</strong> {clicked_node.get('name', '未知')}</div>
+                                                <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
+                                                <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
+                                                <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
+                                                <div style="margin-bottom: 8px;"><strong>评分:</strong> {clicked_node.get('score', '无数据')}</div>
                                             </div>
                                             <div style="margin-top: 15px;">
                                                 <strong>描述:</strong><br/>
