@@ -296,7 +296,7 @@ def build_tree_structure(nodes: List[Dict]) -> Optional[Dict]:
         
         if total_nodes_in_tree != len(nodes):
             st.warning(f"⚠️ 树中节点数({total_nodes_in_tree})与原始节点数({len(nodes)})不匹配")
-    else:
+    #else:
         #st.error("❌ 未能找到根节点")
     
     return root
