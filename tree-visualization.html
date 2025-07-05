@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delta Net 树结构可视化</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #fafafa;  /* 简化背景色 */
+            min-height: 100vh;
+            color: #333;
+            overflow: hidden;  /* 隐藏滚动条 */
+        }
+
+        .container {
+            width: 100vw;  /* 全屏宽度 */
+            height: 100vh; /* 全屏高度 */
+            margin: 0;
+            padding: 0;
+        }
+
+        .tree-container {
+            width: 100%;
+            height: 100%;
+            background: #fafafa;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        /* 隐藏部分装饰元素 */
+        .controls,
+        .search-box {
+            display: none;
+        }
+
+        .stats {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-item {
+            text-align: center;
+            min-width: 80px;
+        }
+
+        .stat-number {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 2px;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #666;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        #tree-svg {
+            width: 100vw;   /* 全屏宽度 */
+            height: 100vh;  /* 全屏高度 */
+            border: none;   /* 移除边框 */
+            background: #fafafa;
+        }
+
+        .node {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .node circle {
+            fill: #667eea;
+            stroke: #4c63d2;
+            stroke-width: 6px;  /* 超粗边框 */
+            filter: drop-shadow(6px 6px 12px rgba(0,0,0,0.5));  /* 超强阴影 */
+        }
+
+        .node.root circle {
+            fill: #e74c3c;
+            stroke: #c0392b;
+            r: 50;  /* 超大根节点 */
+        }
+
+        .node text {
+            font-size: 12px;
+            font-weight: bold;
+            fill: white;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+        }
+
+        .node:hover circle {
+            fill: #764ba2;
+            stroke: #5a4a8a;
+            transform: scale(1.1);  /* 适中的悬停缩放效果 */
+        }
+
+        .link {
+            fill: none;
+            stroke: #bbb;
+            stroke-width: 5px;  /* 再次增粗连接线 */
+            stroke-opacity: 0.8;
+        }
+
+        .link:hover {
+            stroke: #667eea;
+            stroke-width: 7px;  /* 悬停时更粗 */
+            stroke-opacity: 1;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            pointer-events: none;
+            z-index: 1000;
+            max-width: 300px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .node-info-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            z-index: 2000;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1999;
+        }
+
+        .modal-header {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .modal-content {
+            line-height: 1.6;
+        }
+
+        .modal-field {
+            margin-bottom: 15px;
+        }
+
+        .modal-field-label {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        .modal-field-value {
+            color: #333;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .highlight {
+            fill: #f39c12 !important;
+            stroke: #e67e22 !important;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .stats {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .search-input {
+                width: 100%;
+                max-width: 300px;
+            }
+            
+            .node-info-modal {
+                width: 95%;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-number">0</div>
+                <div class="stat-label">总节点数</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">0</div>
+                <div class="stat-label">变体数量</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">0</div>
+                <div class="stat-label">已加载数据</div>
+            </div>
+        </div>
+        
+        <div class="tree-container">
+            <svg id="tree-svg"></svg>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip" style="display: none;"></div>
+
+    <script>
+        // 全局变量
+        let svg, g, zoom, tree, tooltip;
+        let currentData = null;
+        let allNodes = [];
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeVisualization();
+            loadTreeData();
+            
+            // 监听窗口大小变化
+            window.addEventListener('resize', function() {
+                if (currentData) {
+                    // 延迟重新渲染，避免频繁调用
+                    clearTimeout(window.resizeTimer);
+                    window.resizeTimer = setTimeout(() => {
+                        renderTree(currentData);
+                    }, 300);
+                }
+            });
+        });
+
+        // 初始化可视化组件
+        function initializeVisualization() {
+            // SVG 设置
+            svg = d3.select("#tree-svg");
+            
+            // 获取全屏尺寸
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            svg.attr("viewBox", [0, 0, width, height]);
+            
+            g = svg.append("g");
+
+            // 缩放功能
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 5])  // 增加最大缩放比例
+                .on("zoom", (event) => {
+                    g.attr("transform", event.transform);
+                });
+
+            svg.call(zoom);
+
+            // 树布局 - 竖直方向，充分利用全屏空间
+            tree = d3.tree()
+                .size([width - 100, height - 150])  // 为顶部统计信息留出空间
+                .separation((a, b) => {
+                    // 改进的间距计算，增加间距避免重叠
+                    if (a.parent === b.parent) {
+                        // 同一父节点的子节点间距
+                        return 2.0;
+                    } else {
+                        // 不同父节点的子节点间距
+                        return 2.5;
+                    }
+                });
+
+            // 工具提示
+            tooltip = d3.select("#tooltip");
+        }
+
+        // 从API加载数据
+        async function loadTreeData() {
+            try {
+                showLoadingState();
+                
+                // 使用缓存服务器更新数据
+                const response = await fetch('http://localhost:8002/api/update');
+                if (!response.ok) {
+                    throw new Error(`缓存服务器响应错误: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.error || '获取数据失败');
+                }
+                
+                allNodes = result.data;
+                
+                // 构建树结构
+                const treeData = buildTreeStructure(result.data);
+                currentData = treeData;
+                
+                updateStats(result.data);
+                renderTree(treeData);
+                
+            } catch (error) {
+                console.error('Error loading tree data:', error);
+                showErrorState(error.message);
+            }
+        }
+
+
+
+        // 获取总记录数
+        async function getTotalRecords() {
+            try {
+                const response = await fetch('http://45.78.231.212:8001/stats');
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.total_records || 0;
+                }
+            } catch (error) {
+                console.error('Error fetching total records:', error);
+            }
+            return 0;
+        }
+
+        // 构建树结构
+        function buildTreeStructure(nodes) {
+            if (!nodes || nodes.length === 0) return null;
+            
+            // 创建节点映射
+            const nodeMap = {};
+            nodes.forEach(node => {
+                nodeMap[node.index] = {
+                    ...node,
+                    children: []
+                };
+            });
+            
+            // 找到根节点和构建父子关系
+            let root = null;
+            nodes.forEach(node => {
+                if (node.parent === null || node.parent === 0 || !nodeMap[node.parent]) {
+                    // 根节点
+                    root = nodeMap[node.index];
+                } else {
+                    // 子节点
+                    const parent = nodeMap[node.parent];
+                    if (parent) {
+                        parent.children.push(nodeMap[node.index]);
+                    }
+                }
+            });
+            
+            return root;
+        }
+
+        // 更新统计信息
+        function updateStats(nodes) {
+            const totalNodes = nodes.length;
+            const variants = totalNodes > 0 ? totalNodes - 1 : 0;
+            
+            document.querySelector('.stats .stat-item:nth-child(1) .stat-number').textContent = totalNodes;
+            document.querySelector('.stats .stat-item:nth-child(2) .stat-number').textContent = variants;
+            document.querySelector('.stats .stat-item:nth-child(3) .stat-number').textContent = totalNodes;
+        }
+
+        // 动态调整树布局尺寸
+        function adjustTreeSize(root) {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            const levelCounts = {};
+            root.descendants().forEach(d => {
+                levelCounts[d.depth] = (levelCounts[d.depth] || 0) + 1;
+            });
+            
+            const maxNodesInLevel = Math.max(...Object.values(levelCounts));
+            const maxDepth = Math.max(...Object.keys(levelCounts).map(Number));
+            
+            // 增加节点间距以避免重叠
+            const minNodeSpacing = 80;  // 水平间距
+            const minLevelSpacing = 100; // 垂直间距
+            
+            const requiredWidth = Math.max(
+                width, 
+                maxNodesInLevel * minNodeSpacing + 200
+            );
+            const requiredHeight = Math.max(
+                height, 
+                maxDepth * minLevelSpacing + 250
+            );
+            
+            svg.attr("viewBox", [0, 0, requiredWidth, requiredHeight]);
+            tree.size([requiredWidth - 100, requiredHeight - 150]);
+        }
+
+        // 渲染树结构
+        function renderTree(data) {
+            if (!data) return;
+            
+            // 清除之前的内容
+            g.selectAll("*").remove();
+            
+            // 创建层次结构
+            const root = d3.hierarchy(data);
+            
+            // 动态调整树布局尺寸
+            adjustTreeSize(root);
+            
+            // 生成树
+            tree(root);
+
+            // 创建连接线生成器 - 竖直方向
+            const link = d3.linkVertical()
+                .x(d => d.x + 50)  // 水平位置
+                .y(d => d.y + 100); // 竖直位置，为顶部统计信息留出空间
+
+            // 绘制连接线
+            g.selectAll(".link")
+                .data(root.links())
+                .enter().append("path")
+                .attr("class", "link")
+                .attr("d", link);
+
+            // 创建节点组 - 竖直方向
+            const node = g.selectAll(".node")
+                .data(root.descendants())
+                .enter().append("g")
+                .attr("class", d => "node" + (d.depth === 0 ? " root" : ""))
+                .attr("transform", d => `translate(${d.x + 50},${d.y + 100})`)
+                .on("click", function(event, d) {
+                    showNodeInfo(d);
+                })
+                .on("mouseover", function(event, d) {
+                    showTooltip(event, d);
+                })
+                .on("mouseout", function() {
+                    hideTooltip();
+                });
+
+            // 添加圆圈
+            node.append("circle")
+                .attr("r", d => d.depth === 0 ? 25 : 18)  // 适中大小的节点
+                .on("mouseover", function(event, d) {
+                    showTooltip(event, d);
+                })
+                .on("mouseout", function() {
+                    hideTooltip();
+                });
+
+            // 添加索引文本
+            node.append("text")
+                .text(d => d.data.index)
+                .attr("dy", "0.35em");
+
+            // 添加动画
+            node.style("opacity", 0)
+                .transition()
+                .duration(1000)
+                .delay((d, i) => i * 50)
+                .style("opacity", 1);
+
+            g.selectAll(".link")
+                .style("opacity", 0)
+                .transition()
+                .duration(1000)
+                .delay(500)
+                .style("opacity", 0.6);
+                
+            hideLoadingState();
+        }
+
+        // 显示加载状态
+        function showLoadingState() {
+            g.selectAll("*").remove();
+            
+            // 获取屏幕中心位置
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            g.append("text")
+                .attr("x", centerX)
+                .attr("y", centerY)
+                .attr("text-anchor", "middle")
+                .style("font-size", "24px")
+                .style("fill", "#666")
+                .text("正在加载数据...");
+        }
+
+        // 隐藏加载状态
+        function hideLoadingState() {
+            // 加载状态会在渲染时自动清除
+        }
+
+        // 显示错误状态
+        function showErrorState(message) {
+            g.selectAll("*").remove();
+            
+            // 获取屏幕中心位置
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            g.append("text")
+                .attr("x", centerX)
+                .attr("y", centerY - 60)
+                .attr("text-anchor", "middle")
+                .style("font-size", "24px")
+                .style("fill", "#e74c3c")
+                .text("加载失败");
+                
+            g.append("text")
+                .attr("x", centerX)
+                .attr("y", centerY - 30)
+                .attr("text-anchor", "middle")
+                .style("font-size", "16px")
+                .style("fill", "#666")
+                .text(message);
+                
+            if (message.includes('缓存服务器')) {
+                g.append("text")
+                    .attr("x", centerX)
+                    .attr("y", centerY)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "14px")
+                    .style("fill", "#666")
+                    .text("请确保运行了缓存服务器:");
+                    
+                g.append("text")
+                    .attr("x", centerX)
+                    .attr("y", centerY + 20)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "14px")
+                    .style("fill", "#666")
+                    .text("python3 serve.py");
+            }
+                
+            g.append("text")
+                .attr("x", centerX)
+                .attr("y", centerY + 50)
+                .attr("text-anchor", "middle")
+                .style("font-size", "18px")
+                .style("fill", "#667eea")
+                .style("cursor", "pointer")
+                .text("点击重试")
+                .on("click", loadTreeData);
+        }
+
+        // 工具提示功能
+        function showTooltip(event, d) {
+            const node = d.data;
+            tooltip.style("display", "block")
+                .style("left", (event.pageX + 15) + "px")
+                .style("top", (event.pageY - 15) + "px")
+                .html(`
+                    <div style="font-size: 16px; font-weight: bold; margin-bottom: 8px; color: #fff;">${node.name}</div>
+                    <div style="font-size: 13px; opacity: 0.9;">
+                        <div style="margin-bottom: 4px;"><span style="color: #ccc;">索引:</span> ${node.index}</div>
+                        <div style="margin-bottom: 4px;"><span style="color: #ccc;">测试分数:</span> ${node.test}</div>
+                        <div style="margin-bottom: 4px;"><span style="color: #ccc;">综合得分:</span> ${formatScore(node.score, node.raw_score)}</div>
+                        <div><span style="color: #ccc;">点击查看详细信息</span></div>
+                    </div>
+                `);
+        }
+
+        function hideTooltip() {
+            tooltip.style("display", "none");
+        }
+
+        // 格式化分数显示
+        function formatScore(score, rawScore) {
+            if (score === undefined || score === null) {
+                return '无数据';
+            }
+            if (typeof rawScore === 'number' && rawScore !== rawScore) {
+                return '无数据 (NaN)';
+            }
+            return score;
+        }
+
+        // 显示节点详细信息
+        function showNodeInfo(d) {
+            const node = d.data;
+            
+            // 创建模态框
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            
+            const modal = document.createElement('div');
+            modal.className = 'node-info-modal';
+            
+            modal.innerHTML = `
+                <span class="modal-close">&times;</span>
+                <div class="modal-header">节点详细信息</div>
+                <div class="modal-content">
+                    <div class="modal-field">
+                        <div class="modal-field-label">索引 (Index)</div>
+                        <div class="modal-field-value">${node.index}</div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">名称 (Name)</div>
+                        <div class="modal-field-value">${node.name}</div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">训练分数 (Train)</div>
+                        <div class="modal-field-value">${node.train}</div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">测试分数 (Test)</div>
+                        <div class="modal-field-value">${node.test}</div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">综合得分 (Score)</div>
+                        <div class="modal-field-value">${formatScore(node.score, node.raw_score)}</div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">动机 (Motivation)</div>
+                        <div class="modal-field-value">${node.motivation}</div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(overlay);
+            document.body.appendChild(modal);
+            
+            // 关闭模态框
+            function closeModal() {
+                document.body.removeChild(overlay);
+                document.body.removeChild(modal);
+            }
+            
+            overlay.addEventListener('click', closeModal);
+            modal.querySelector('.modal-close').addEventListener('click', closeModal);
+            
+            // ESC键关闭
+            function handleEscape(event) {
+                if (event.key === 'Escape') {
+                    closeModal();
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            }
+            document.addEventListener('keydown', handleEscape);
+        }
+
+        
+    </script>
+</body>
+</html>
