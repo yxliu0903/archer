@@ -147,7 +147,7 @@ def translate_with_doubao(text: str) -> str:
         client = get_doubao_client()
         
         # 构建翻译提示
-        prompt = f"请将以下英文文本翻译成中文，保持原意和专业性，如果已经是中文则直接返回原文：\n\n{text}"
+        prompt = f"请将以下英文文本翻译成中文，保持原意和专业性，如果已经是中文则直接返回原文，不要添加任何其他内容：\n\n{text}"
         
         # 调用豆包API
         completion = client.chat.completions.create(
@@ -632,7 +632,7 @@ def display_node_details(node: Dict):
     
     st.markdown(f"""
     <div class="node-info">
-        <h3>节点 {node['index']} - {name_zh}</h3>
+        <h3>节点 {node['index']} - {name}</h3>
         <p><strong>父节点:</strong> {node.get('parent', '无')}</p>
         <p><strong>训练结果:</strong> {node.get('train', '无数据')}</p>
         <p><strong>测试结果:</strong> {node.get('test', '无数据')}</p>
@@ -833,10 +833,9 @@ def main():
                                             点击的节点信息
                                         </div>
                                         <div style="margin-top: 15px;">
-                                            <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} - {name_zh}</h3>
+                                            <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} - {clicked_node.get('name', '未知')}</h3>
                                             <div style="margin-bottom: 15px;">
                                                 <div style="margin-bottom: 8px;"><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
-                                                <div style="margin-bottom: 8px;"><strong>名称 (原文):</strong> {clicked_node.get('name', '未知')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
