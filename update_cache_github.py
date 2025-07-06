@@ -40,7 +40,7 @@ def load_cache_data():
 def get_total_records():
     """获取总记录数"""
     try:
-        response = requests.get(f"{API_BASE_URL}/stats", timeout=10)
+        response = requests.get(f"{API_BASE_URL}/stats", timeout=60)
         if response.status_code == 200:
             data = response.json()
             return data.get('total_records', 0)
