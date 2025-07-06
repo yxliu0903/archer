@@ -147,7 +147,7 @@ def translate_with_doubao(text: str) -> str:
         client = get_doubao_client()
         
         # 构建翻译提示
-        prompt = f"请将以下英文文本翻译成中文，保持原意和专业性，如果已经是中文则直接返回原文，不要添加任何其他内容：\n\n{text}"
+        prompt = f"请将以下英文文本翻译成中文，保持原意和专业性，如果已经是中文则直接返回原文，不要添加任何其他内容,如果是模型名称则直接返回原文：\n\n{text}"
         
         # 调用豆包API
         completion = client.chat.completions.create(
