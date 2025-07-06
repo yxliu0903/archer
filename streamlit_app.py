@@ -803,8 +803,10 @@ def main():
             }
             
             # 显示图表并捕获点击事件
+            # 使用选中的节点ID作为key的一部分，确保图表在选择节点时重新渲染
+            chart_key = f"tree_chart_{st.session_state.clicked_node_id}"
             clicked_data = st.plotly_chart(fig, use_container_width=True, config=config, 
-                                         on_select="rerun", key="tree_chart")
+                                         on_select="rerun", key=chart_key)
             
             # 检查是否有点击事件，如果有则弹出信息框
             if clicked_data and 'selection' in clicked_data and clicked_data['selection']:
@@ -917,12 +919,24 @@ def main():
             # 创建选择器
             node_options = {result['index']: f"节点 {result['index']} - {result.get('name', '未知')}" 
                            for result in all_results}
+            
+            # 确定默认选择的节点
+            default_index = 0
+            if st.session_state.clicked_node_id is not None and st.session_state.clicked_node_id in node_options:
+                default_index = list(node_options.keys()).index(st.session_state.clicked_node_id)
+            
             selected_node_id = st.selectbox(
                 "选择节点查看详情：",
                 options=list(node_options.keys()),
                 format_func=lambda x: node_options[x],
+                index=default_index,
                 key="manual_node_selector"
             )
+            
+            # 如果手动选择了节点，更新session state中的点击节点ID
+            if selected_node_id != st.session_state.clicked_node_id:
+                st.session_state.clicked_node_id = selected_node_id
+                st.rerun()
             
             # 显示手动选择的节点信息
             if selected_node_id:
@@ -966,7 +980,24 @@ def main():
         
         # 节点选择器
         node_ids = [result['index'] for result in all_results]
-        selected_node_id = st.selectbox("选择节点", node_ids, format_func=lambda x: f"节点 {x}")
+        
+        # 确定默认选择的节点
+        default_index = 0
+        if st.session_state.clicked_node_id is not None and st.session_state.clicked_node_id in node_ids:
+            default_index = node_ids.index(st.session_state.clicked_node_id)
+        
+        selected_node_id = st.selectbox(
+            "选择节点", 
+            node_ids, 
+            format_func=lambda x: f"节点 {x}",
+            index=default_index,
+            key="tab3_node_selector"
+        )
+        
+        # 如果手动选择了节点，更新session state中的点击节点ID
+        if selected_node_id != st.session_state.clicked_node_id:
+            st.session_state.clicked_node_id = selected_node_id
+            st.rerun()
         
         # 显示选中节点的详情
         selected_node = next((result for result in all_results if result['index'] == selected_node_id), None)
