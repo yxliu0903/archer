@@ -127,38 +127,60 @@ def format_test_data(test_data):
         return f"平均准确率: {test_data * 100:.2f}%"
     return str(test_data) if test_data is not None else '无数据'
 
-def fetch_single_record(index: int) -> Optional[Dict]:
-    """获取单个记录"""
-    try:
-        url = f"{API_BASE_URL}/elements/with-score/by-index/{index}"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if 'result' in data and 'test' in data['result']:
-                # 处理score字段
-                raw_score = data.get('score', 0)
-                if raw_score != raw_score:  # 检查是否为NaN
-                    score_value = 0
-                    score_display = "无数据"
-                else:
-                    score_value = raw_score
-                    score_display = f"{raw_score:.4f}" if isinstance(raw_score, (int, float)) else str(raw_score)
+def fetch_single_record(index: int, max_retries: int = 3) -> Optional[Dict]:
+    """获取单个记录，带重试机制"""
+    for attempt in range(max_retries):
+        try:
+            url = f"{API_BASE_URL}/elements/with-score/by-index/{index}"
+            # 增加超时时间并设置连接超时
+            response = requests.get(url, timeout=(5, 60))  # 连接超时5秒，读取超时60秒
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'test' in data['result']:
+                    # 处理score字段
+                    raw_score = data.get('score', 0)
+                    if raw_score != raw_score:  # 检查是否为NaN
+                        score_value = 0
+                        score_display = "无数据"
+                    else:
+                        score_value = raw_score
+                        score_display = f"{raw_score:.4f}" if isinstance(raw_score, (int, float)) else str(raw_score)
+                    
+                    return {
+                        "index": index,
+                        "name": data.get('name', f'节点 {index}'),
+                        "parent": data.get('parent'),
+                        "train": format_train_data(data['result']['train']),
+                        "test": format_test_data(data['result']['test']),
+                        "score": score_display,
+                        "motivation": data.get('motivation', '无描述'),
+                        "raw_data": data,
+                        "raw_train": data['result']['train'],
+                        "raw_test": data['result']['test'],
+                        "raw_score": raw_score
+                    }
+            elif response.status_code == 404:
+                st.warning(f"记录 {index} 不存在")
+                return None
+            else:
+                st.warning(f"获取记录 {index} 失败，状态码: {response.status_code}")
                 
-                return {
-                    "index": index,
-                    "name": data.get('name', f'节点 {index}'),
-                    "parent": data.get('parent'),
-                    "train": format_train_data(data['result']['train']),
-                    "test": format_test_data(data['result']['test']),
-                    "score": score_display,
-                    "motivation": data.get('motivation', '无描述'),
-                    "raw_data": data,
-                    "raw_train": data['result']['train'],
-                    "raw_test": data['result']['test'],
-                    "raw_score": raw_score
-                }
-    except requests.exceptions.RequestException as e:
-        st.error(f"获取记录 {index} 失败: {e}")
+        except requests.exceptions.ConnectTimeout:
+            st.warning(f"连接服务器超时 (尝试 {attempt + 1}/{max_retries})")
+        except requests.exceptions.ReadTimeout:
+            st.warning(f"读取数据超时 (尝试 {attempt + 1}/{max_retries})")
+        except requests.exceptions.ConnectionError:
+            st.error(f"无法连接到服务器 {API_BASE_URL}")
+            return None
+        except requests.exceptions.RequestException as e:
+            st.warning(f"获取记录 {index} 失败: {e} (尝试 {attempt + 1}/{max_retries})")
+        
+        # 如果不是最后一次尝试，等待一段时间后重试
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)  # 指数退避：2, 4, 8秒
+    
+    st.error(f"获取记录 {index} 失败，已重试 {max_retries} 次")
     return None
 
 def update_cache_data():
