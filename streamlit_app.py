@@ -445,7 +445,7 @@ def calculate_hierarchical_layout(root: Dict) -> Dict:
     
     return positions
 
-def create_tree_visualization(root: Dict, selected_node_id=None):
+def create_tree_visualization(root: Dict, selected_node_id: int = None):
     """创建树形可视化图表"""
     if not root:
         return None
@@ -572,23 +572,27 @@ def create_tree_visualization(root: Dict, selected_node_id=None):
     
     # 如果有选中的节点，添加文本显示
     if selected_node_id is not None:
+        # 找到选中节点的位置
+        selected_node_index = None
         for i, node_id in enumerate(G.nodes()):
             if node_id == selected_node_id:
-                x, y = pos[node_id]
-                fig.add_trace(go.Scatter(
-                    x=[x], y=[y],
-                    mode='text',
-                    text=[str(node_id)],
-                    textposition="middle center",
-                    textfont=dict(
-                        size=14,
-                        color='white',
-                        family='Arial Black'
-                    ),
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
+                selected_node_index = i
                 break
+        
+        if selected_node_index is not None:
+            fig.add_trace(go.Scatter(
+                x=[node_x[selected_node_index]], 
+                y=[node_y[selected_node_index]],
+                mode='text',
+                text=[str(selected_node_id)],
+                textfont=dict(
+                    size=14,
+                    color='white',
+                    family='Arial Black'
+                ),
+                showlegend=False,
+                hoverinfo='none'
+            ))
     
     fig.update_layout(
         title=dict(
@@ -744,21 +748,26 @@ def main():
     with tab1:
         st.subheader("交互式树形结构")
         
-        # 添加输入框用于选择节点
+        # 添加输入框用于直接跳转到节点
         col1, col2 = st.columns([2, 1])
         with col1:
-            node_ids = [result['index'] for result in all_results]
-            input_node_id = st.number_input(
-                "输入节点ID查看详情:", 
-                min_value=min(node_ids) if node_ids else 1,
-                max_value=max(node_ids) if node_ids else 1,
-                value=min(node_ids) if node_ids else 1,
+            input_index = st.number_input(
+                "输入节点索引直接查看详情：", 
+                min_value=1, 
+                max_value=len(all_results) if all_results else 1,
+                value=1,
                 step=1,
-                key="input_node_id"
+                key="input_node_index"
             )
         with col2:
-            if st.button("🔍 查看节点", key="view_input_node"):
-                st.session_state.selected_node_from_input = input_node_id
+            if st.button("🔍 查看节点", key="view_node_button"):
+                # 将输入的索引设置为选中状态
+                st.session_state.selected_node_id = input_index
+                st.rerun()  # 刷新页面以显示选中效果
+        
+        # 初始化选中节点状态
+        if 'selected_node_id' not in st.session_state:
+            st.session_state.selected_node_id = None
         
         # 显示树结构信息
         def get_tree_info(node, level=0):
@@ -782,13 +791,8 @@ def main():
             with info_cols[i]:
                 st.metric(f"第 {level} 层", f"{count} 个节点")
         
-        # 获取选中的节点ID（从点击或输入）
-        selected_node_id = None
-        if hasattr(st.session_state, 'selected_node_from_input'):
-            selected_node_id = st.session_state.selected_node_from_input
-        
         # 创建并显示树形图
-        fig = create_tree_visualization(root, selected_node_id)
+        fig = create_tree_visualization(root, st.session_state.selected_node_id)
         if fig:
             # 配置图表交互选项
             config = {
@@ -836,8 +840,8 @@ def main():
                         clicked_node_id = int(point['text'])
                     
                     if clicked_node_id is not None:
-                        # 设置选中的节点，用于显示index
-                        st.session_state.selected_node_from_input = clicked_node_id
+                        # 设置选中节点状态
+                        st.session_state.selected_node_id = clicked_node_id
                         
                         # 找到对应的节点详细信息
                         clicked_node = next((result for result in all_results if result['index'] == clicked_node_id), None)
@@ -909,19 +913,20 @@ def main():
                                     col1, col2, col3 = st.columns([1, 1, 1])
                                     with col2:
                                         if st.button("✖️ 关闭信息框", key="close_popup", type="primary"):
+                                            st.session_state.selected_node_id = None
                                             st.rerun()
             
-            # 显示输入框选中的节点详情
-            if hasattr(st.session_state, 'selected_node_from_input') and st.session_state.selected_node_from_input:
-                selected_from_input = next((result for result in all_results if result['index'] == st.session_state.selected_node_from_input), None)
-                if selected_from_input:
+            # 显示通过输入框选中的节点详情
+            if st.session_state.selected_node_id is not None and 'selection' not in (clicked_data or {}):
+                selected_node = next((result for result in all_results if result['index'] == st.session_state.selected_node_id), None)
+                if selected_node:
                     with st.container():
                         st.markdown("---")
                         
                         # 翻译节点信息
                         with st.spinner('🌐 正在翻译节点信息...'):
-                            name_zh = selected_from_input.get('name', '未知')  # 不翻译名称
-                            motivation_zh = translate_with_doubao(selected_from_input.get('motivation', '无描述'))
+                            name_zh = selected_node.get('name', '未知')  # 不翻译名称
+                            motivation_zh = translate_with_doubao(selected_node.get('motivation', '无描述'))
                         
                         # 创建一个突出的弹出框样式
                         st.markdown(f"""
@@ -949,13 +954,13 @@ def main():
                                 选中的节点信息
                             </div>
                             <div style="margin-top: 15px;">
-                                <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {selected_from_input['index']} - {selected_from_input.get('name', '未知')}</h3>
+                                <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {selected_node['index']} - {selected_node.get('name', '未知')}</h3>
                                 <div style="margin-bottom: 15px;">
-                                    <div style="margin-bottom: 8px;"><strong>父节点:</strong> {selected_from_input.get('parent', '无')}</div>
-                                    <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {selected_from_input.get('test', '无数据')}</div>
-                                    <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {selected_from_input.get('train', '无数据')}</div>
-                                    <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {selected_from_input.get('level', '未知')} 层</div>
-                                    <div style="margin-bottom: 8px;"><strong>评分:</strong> {selected_from_input.get('score', '无数据')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>父节点:</strong> {selected_node.get('parent', '无')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {selected_node.get('test', '无数据')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {selected_node.get('train', '无数据')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {selected_node.get('level', '未知')} 层</div>
+                                    <div style="margin-bottom: 8px;"><strong>评分:</strong> {selected_node.get('score', '无数据')}</div>
                                 </div>
                                 <div style="margin-top: 15px;">
                                     <strong>描述 (中文):</strong><br/>
@@ -964,7 +969,7 @@ def main():
                                     </div>
                                     <strong style="margin-top: 10px; display: block;">描述 (原文):</strong><br/>
                                     <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #6c757d;">
-                                        {selected_from_input.get('motivation', '无描述')}
+                                        {selected_node.get('motivation', '无描述')}
                                     </div>
                                 </div>
                             </div>
@@ -977,12 +982,11 @@ def main():
                         </style>
                         """, unsafe_allow_html=True)
                         
-                        # 添加清除选择按钮
+                        # 添加关闭按钮
                         col1, col2, col3 = st.columns([1, 1, 1])
                         with col2:
-                            if st.button("✖️ 清除选择", key="clear_selection", type="primary"):
-                                if 'selected_node_from_input' in st.session_state:
-                                    del st.session_state.selected_node_from_input
+                            if st.button("✖️ 关闭信息框", key="close_input_popup", type="primary"):
+                                st.session_state.selected_node_id = None
                                 st.rerun()
             
             # 在图表下方添加节点选择器（作为备选方案）
