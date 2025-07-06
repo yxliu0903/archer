@@ -804,7 +804,7 @@ def main():
                                     
                                     # 翻译节点信息
                                     with st.spinner('🌐 正在翻译节点信息...'):
-                                        name_zh = translate_with_doubao(clicked_node.get('name', '未知'))
+                                        name_zh = clicked_node.get('name', '未知')
                                         motivation_zh = translate_with_doubao(clicked_node.get('motivation', '无描述'))
                                     
                                     # 创建一个突出的弹出框样式
