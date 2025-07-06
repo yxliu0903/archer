@@ -627,7 +627,7 @@ def display_node_details(node: Dict):
     
     # 翻译文本
     with st.spinner('🌐 正在翻译...'):
-        name_zh = translate_with_doubao(name)
+        name_zh = name  # 不翻译名称
         motivation_zh = translate_with_doubao(motivation)
     
     st.markdown(f"""
