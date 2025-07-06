@@ -782,6 +782,10 @@ def main():
             with info_cols[i]:
                 st.metric(f"第 {level} 层", f"{count} 个节点")
         
+        # 检查是否有点击事件需要处理
+        if 'temp_clicked_node_id' not in st.session_state:
+            st.session_state.temp_clicked_node_id = None
+        
         # 创建并显示树形图
         fig = create_tree_visualization(root, st.session_state.clicked_node_id)
         if fig:
@@ -808,7 +812,7 @@ def main():
             clicked_data = st.plotly_chart(fig, use_container_width=True, config=config, 
                                          on_select="rerun", key=chart_key)
             
-            # 检查是否有点击事件，如果有则弹出信息框
+            # 检查是否有点击事件，如果有则更新选中节点并重新运行
             if clicked_data and 'selection' in clicked_data and clicked_data['selection']:
                 # 获取点击的节点
                 points = clicked_data['selection']['points']
@@ -832,85 +836,87 @@ def main():
                         # 直接从text获取节点ID
                         clicked_node_id = int(point['text'])
                     
-                    if clicked_node_id is not None:
+                    if clicked_node_id is not None and clicked_node_id != st.session_state.clicked_node_id:
                         # 更新session state中的点击节点ID
                         st.session_state.clicked_node_id = clicked_node_id
+                        st.rerun()
+            
+            # 显示选中节点的详细信息（如果有的话）
+            if st.session_state.clicked_node_id is not None:
+                clicked_node = next((result for result in all_results if result['index'] == st.session_state.clicked_node_id), None)
+                if clicked_node:
+                    # 弹出节点信息框
+                    with st.container():
+                        st.markdown("---")
                         
-                        # 找到对应的节点详细信息
-                        clicked_node = next((result for result in all_results if result['index'] == clicked_node_id), None)
-                        if clicked_node:
-                                # 弹出节点信息框
-                                with st.container():
-                                    st.markdown("---")
-                                    
-                                    # 翻译节点信息
-                                    with st.spinner('🌐 正在翻译节点信息...'):
-                                        name_zh = clicked_node.get('name', '未知')
-                                        motivation_zh = translate_with_doubao(clicked_node.get('motivation', '无描述'))
-                                    
-                                    # 创建一个突出的弹出框样式
-                                    st.markdown(f"""
-                                    <div style="
-                                        position: relative;
-                                        border: 3px solid #667eea;
-                                        border-radius: 15px;
-                                        padding: 20px;
-                                        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-                                        margin: 20px 0;
-                                        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
-                                        animation: fadeIn 0.3s ease-in;
-                                    ">
-                                        <div style="
-                                            position: absolute;
-                                            top: -15px;
-                                            left: 20px;
-                                            background: #667eea;
-                                            color: white;
-                                            padding: 5px 15px;
-                                            border-radius: 20px;
-                                            font-size: 14px;
-                                            font-weight: bold;
-                                        ">
-                                            点击的节点信息
-                                        </div>
-                                        <div style="margin-top: 15px;">
-                                            <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} - {clicked_node.get('name', '未知')}</h3>
-                                            <div style="margin-bottom: 15px;">
-                                                <div style="margin-bottom: 8px;"><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
-                                                <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
-                                                <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
-                                                <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
-                                                <div style="margin-bottom: 8px;"><strong>评分:</strong> {clicked_node.get('score', '无数据')}</div>
-                                            </div>
-                                            <div style="margin-top: 15px;">
-                                                <strong>描述 (中文):</strong><br/>
-                                                <div style="background: #e8f4fd; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #667eea;">
-                                                    {motivation_zh}
-                                                </div>
-                                                <strong style="margin-top: 10px; display: block;">描述 (原文):</strong><br/>
-                                                <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #6c757d;">
-                                                    {clicked_node.get('motivation', '无描述')}
-                                                </div>
-                                            </div>
-                                        </div>
+                        # 翻译节点信息
+                        with st.spinner('🌐 正在翻译节点信息...'):
+                            name_zh = clicked_node.get('name', '未知')
+                            motivation_zh = translate_with_doubao(clicked_node.get('motivation', '无描述'))
+                        
+                        # 创建一个突出的弹出框样式
+                        st.markdown(f"""
+                        <div style="
+                            position: relative;
+                            border: 3px solid #667eea;
+                            border-radius: 15px;
+                            padding: 20px;
+                            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+                            margin: 20px 0;
+                            box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+                            animation: fadeIn 0.3s ease-in;
+                        ">
+                            <div style="
+                                position: absolute;
+                                top: -15px;
+                                left: 20px;
+                                background: #667eea;
+                                color: white;
+                                padding: 5px 15px;
+                                border-radius: 20px;
+                                font-size: 14px;
+                                font-weight: bold;
+                            ">
+                                选中的节点信息
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} - {clicked_node.get('name', '未知')}</h3>
+                                <div style="margin-bottom: 15px;">
+                                    <div style="margin-bottom: 8px;"><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
+                                    <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
+                                    <div style="margin-bottom: 8px;"><strong>评分:</strong> {clicked_node.get('score', '无数据')}</div>
+                                </div>
+                                <div style="margin-top: 15px;">
+                                    <strong>描述 (中文):</strong><br/>
+                                    <div style="background: #e8f4fd; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #667eea;">
+                                        {motivation_zh}
                                     </div>
-                                    <style>
-                                        @keyframes fadeIn {{
-                                            from {{ opacity: 0; transform: translateY(-10px); }}
-                                            to {{ opacity: 1; transform: translateY(0); }}
-                                        }}
-                                    </style>
-                                    """, unsafe_allow_html=True)
-                                    
-                                    # 添加关闭按钮
-                                    col1, col2, col3 = st.columns([1, 1, 1])
-                                    with col1:
-                                        if st.button("🔄 清除节点选择", key="clear_selection", type="secondary"):
-                                            st.session_state.clicked_node_id = None
-                                            st.rerun()
-                                    with col3:
-                                        if st.button("✖️ 关闭信息框", key="close_popup", type="primary"):
-                                            st.rerun()
+                                    <strong style="margin-top: 10px; display: block;">描述 (原文):</strong><br/>
+                                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #6c757d;">
+                                        {clicked_node.get('motivation', '无描述')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <style>
+                            @keyframes fadeIn {{
+                                from {{ opacity: 0; transform: translateY(-10px); }}
+                                to {{ opacity: 1; transform: translateY(0); }}
+                            }}
+                        </style>
+                        """, unsafe_allow_html=True)
+                        
+                        # 添加关闭按钮
+                        col1, col2, col3 = st.columns([1, 1, 1])
+                        with col1:
+                            if st.button("🔄 清除节点选择", key="clear_selection", type="secondary"):
+                                st.session_state.clicked_node_id = None
+                                st.rerun()
+                        with col3:
+                            if st.button("✖️ 关闭信息框", key="close_popup", type="primary"):
+                                st.rerun()
             
             # 在图表下方添加节点选择器（作为备选方案）
             st.markdown("---")
