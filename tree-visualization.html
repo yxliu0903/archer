@@ -90,14 +90,14 @@
 
         .node circle {
             fill: #667eea;
-            stroke: #4c63d2;
-            stroke-width: 6px;  /* 超粗边框 */
+            stroke: none;  /* 移除边框 */
+            stroke-width: 0;  /* 移除边框宽度 */
             filter: drop-shadow(6px 6px 12px rgba(0,0,0,0.5));  /* 超强阴影 */
         }
 
         .node.root circle {
             fill: #e74c3c;
-            stroke: #c0392b;
+            stroke: none;  /* 移除边框 */
             r: 50;  /* 超大根节点 */
         }
 
@@ -108,11 +108,12 @@
             text-anchor: middle;
             dominant-baseline: middle;
             pointer-events: none;
+            display: none;  /* 隐藏索引文本 */
         }
 
         .node:hover circle {
             fill: #764ba2;
-            stroke: #5a4a8a;
+            stroke: none;  /* 移除悬停时的边框 */
             transform: scale(1.1);  /* 适中的悬停缩放效果 */
         }
 
@@ -509,10 +510,7 @@
                     hideTooltip();
                 });
 
-            // 添加索引文本
-            node.append("text")
-                .text(d => d.data.index)
-                .attr("dy", "0.35em");
+            // 索引文本已通过CSS隐藏
 
             // 添加动画
             node.style("opacity", 0)

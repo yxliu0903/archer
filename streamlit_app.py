@@ -14,6 +14,7 @@ import time
 import os
 import networkx as nx
 from typing import Dict, List, Optional, Tuple
+from openai import OpenAI
 
 # 页面配置
 st.set_page_config(
@@ -26,6 +27,15 @@ st.set_page_config(
 # 常量配置
 CACHE_FILE = "./cache.json"
 API_BASE_URL = "http://45.78.231.212:8001"
+
+# 豆包API配置
+@st.cache_resource
+def get_doubao_client():
+    """获取豆包API客户端"""
+    return OpenAI(
+        api_key=os.environ.get("ARK_API_KEY", "7955573a-a3dd-4c9f-93bf-5bb24fdba252"), 
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+    )
 
 # 自定义CSS样式
 st.markdown("""
@@ -126,6 +136,35 @@ def format_test_data(test_data):
     if isinstance(test_data, (int, float)):
         return f"平均准确率: {test_data * 100:.2f}%"
     return str(test_data) if test_data is not None else '无数据'
+
+@st.cache_data(ttl=3600)  # 1小时缓存翻译结果
+def translate_with_doubao(text: str) -> str:
+    """使用豆包API翻译文本"""
+    if not text or text.strip() == '' or text in ['无数据', '无描述', '未知']:
+        return text
+    
+    try:
+        client = get_doubao_client()
+        
+        # 构建翻译提示
+        prompt = f"请将以下英文文本翻译成中文，保持原意和专业性，如果已经是中文则直接返回原文：\n\n{text}"
+        
+        # 调用豆包API
+        completion = client.chat.completions.create(
+            model="doubao-1-5-pro-32k-250115",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.3
+        )
+        
+        translation = completion.choices[0].message.content.strip()
+        return translation
+        
+    except Exception as e:
+        st.error(f"翻译失败: {str(e)}")
+        return text  # 翻译失败时返回原文
 
 def fetch_single_record(index: int, max_retries: int = 3) -> Optional[Dict]:
     """获取单个记录，带重试机制"""
@@ -512,15 +551,8 @@ def create_tree_visualization(root: Dict):
     # 添加节点
     fig.add_trace(go.Scatter(
         x=node_x, y=node_y,
-        mode='markers+text',
+        mode='markers',  # 只显示标记，不显示文本
         hoverinfo='none',  # 禁用悬停信息
-        text=node_text,
-        textposition="middle center",
-        textfont=dict(
-            size=14,
-            color='white',
-            family='Arial Black'
-        ),
         marker=dict(
             size=node_sizes,
             color=node_colors,
@@ -530,7 +562,7 @@ def create_tree_visualization(root: Dict):
                 title="评分",
                 x=1.02
             ),
-            line=dict(width=3, color='white'),
+            line=dict(width=0),  # 去掉边框
             opacity=0.8
         ),
         name='节点',
@@ -589,14 +621,32 @@ def create_tree_visualization(root: Dict):
 
 def display_node_details(node: Dict):
     """显示节点详细信息"""
+    # 获取原始文本
+    name = node.get('name', '未知')
+    motivation = node.get('motivation', '无描述')
+    
+    # 翻译文本
+    with st.spinner('🌐 正在翻译...'):
+        name_zh = translate_with_doubao(name)
+        motivation_zh = translate_with_doubao(motivation)
+    
     st.markdown(f"""
     <div class="node-info">
-        <h3>节点 {node['index']} - {node.get('name', '未知')}</h3>
+        <h3>节点 {node['index']} - {name_zh}</h3>
         <p><strong>父节点:</strong> {node.get('parent', '无')}</p>
         <p><strong>训练结果:</strong> {node.get('train', '无数据')}</p>
         <p><strong>测试结果:</strong> {node.get('test', '无数据')}</p>
         <p><strong>评分:</strong> {node.get('score', '无数据')}</p>
-        <p><strong>描述:</strong> {node.get('motivation', '无描述')}</p>
+        <div style="margin-top: 15px;">
+            <p><strong>描述 (中文):</strong></p>
+            <div style="background: #e8f4fd; padding: 10px; border-radius: 8px; border-left: 4px solid #667eea; margin: 5px 0;">
+                {motivation_zh}
+            </div>
+            <p><strong>描述 (原文):</strong></p>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 4px solid #6c757d; margin: 5px 0;">
+                {motivation}
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -751,6 +801,12 @@ def main():
                                 # 弹出节点信息框
                                 with st.container():
                                     st.markdown("---")
+                                    
+                                    # 翻译节点信息
+                                    with st.spinner('🌐 正在翻译节点信息...'):
+                                        name_zh = translate_with_doubao(clicked_node.get('name', '未知'))
+                                        motivation_zh = translate_with_doubao(clicked_node.get('motivation', '无描述'))
+                                    
                                     # 创建一个突出的弹出框样式
                                     st.markdown(f"""
                                     <div style="
@@ -777,18 +833,22 @@ def main():
                                             点击的节点信息
                                         </div>
                                         <div style="margin-top: 15px;">
-                                            <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} 详细信息</h3>
+                                            <h3 style="color: #667eea; margin-bottom: 15px;">🔍 节点 {clicked_node['index']} - {name_zh}</h3>
                                             <div style="margin-bottom: 15px;">
                                                 <div style="margin-bottom: 8px;"><strong>父节点:</strong> {clicked_node.get('parent', '无')}</div>
-                                                <div style="margin-bottom: 8px;"><strong>名称:</strong> {clicked_node.get('name', '未知')}</div>
+                                                <div style="margin-bottom: 8px;"><strong>名称 (原文):</strong> {clicked_node.get('name', '未知')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>测试结果:</strong> {clicked_node.get('test', '无数据')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>训练结果:</strong> {clicked_node.get('train', '无数据')}</div>
                                                 <div style="margin-bottom: 8px;"><strong>层级:</strong> 第 {clicked_node.get('level', '未知')} 层</div>
                                                 <div style="margin-bottom: 8px;"><strong>评分:</strong> {clicked_node.get('score', '无数据')}</div>
                                             </div>
                                             <div style="margin-top: 15px;">
-                                                <strong>描述:</strong><br/>
-                                                <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 5px;">
+                                                <strong>描述 (中文):</strong><br/>
+                                                <div style="background: #e8f4fd; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #667eea;">
+                                                    {motivation_zh}
+                                                </div>
+                                                <strong style="margin-top: 10px; display: block;">描述 (原文):</strong><br/>
+                                                <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 5px; border-left: 4px solid #6c757d;">
                                                     {clicked_node.get('motivation', '无描述')}
                                                 </div>
                                             </div>
