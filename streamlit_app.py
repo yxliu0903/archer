@@ -445,7 +445,7 @@ def calculate_hierarchical_layout(root: Dict) -> Dict:
     
     return positions
 
-def create_tree_visualization(root: Dict):
+def create_tree_visualization(root: Dict, clicked_node_id: Optional[int] = None):
     """创建树形可视化图表"""
     if not root:
         return None
@@ -570,6 +570,29 @@ def create_tree_visualization(root: Dict):
         customdata=node_text  # 存储节点ID用于点击事件
     ))
     
+    # 如果有点击的节点，在该节点上显示索引
+    if clicked_node_id is not None:
+        # 找到点击节点的位置
+        for i, node_id in enumerate(G.nodes()):
+            if int(node_text[i]) == clicked_node_id:
+                x, y = pos[node_id]
+                # 添加文本标签显示节点索引
+                fig.add_trace(go.Scatter(
+                    x=[x], y=[y],
+                    mode='text',
+                    text=[str(clicked_node_id)],
+                    textfont=dict(
+                        size=16,
+                        color='white',
+                        family='Arial Black'
+                    ),
+                    textposition='middle center',
+                    showlegend=False,
+                    hoverinfo='none',
+                    name=f'节点{clicked_node_id}标签'
+                ))
+                break
+    
     fig.update_layout(
         title=dict(
             text="Delta Net 树结构可视化",
@@ -581,7 +604,7 @@ def create_tree_visualization(root: Dict):
         margin=dict(b=50, l=50, r=100, t=80),
         annotations=[
             dict(
-                text="💡 颜色表示评分高低，可拖拽和缩放，点击节点查看详情",
+                text="💡 颜色表示评分高低，可拖拽和缩放，点击节点查看详情并在节点上显示索引",
                 showarrow=False,
                 xref="paper", yref="paper",
                 x=0.5, y=-0.05,
@@ -652,6 +675,10 @@ def display_node_details(node: Dict):
 
 def main():
     """主函数"""
+    # 初始化session state来跟踪点击的节点
+    if 'clicked_node_id' not in st.session_state:
+        st.session_state.clicked_node_id = None
+    
     # 页面标题
     st.markdown("""
     <div class="main-header">
@@ -662,6 +689,15 @@ def main():
     
     # 侧边栏
     st.sidebar.title("🔧 控制面板")
+    
+    # 显示当前选中的节点
+    if st.session_state.clicked_node_id is not None:
+        st.sidebar.success(f"🎯 当前选中节点: {st.session_state.clicked_node_id}")
+        if st.sidebar.button("🔄 清除选择"):
+            st.session_state.clicked_node_id = None
+            st.rerun()
+    else:
+        st.sidebar.info("💡 点击节点查看详情")
     
     # 数据更新按钮
     if st.sidebar.button("🔄 更新数据", help="从服务器获取最新数据"):
@@ -747,7 +783,7 @@ def main():
                 st.metric(f"第 {level} 层", f"{count} 个节点")
         
         # 创建并显示树形图
-        fig = create_tree_visualization(root)
+        fig = create_tree_visualization(root, st.session_state.clicked_node_id)
         if fig:
             # 配置图表交互选项
             config = {
@@ -795,6 +831,9 @@ def main():
                         clicked_node_id = int(point['text'])
                     
                     if clicked_node_id is not None:
+                        # 更新session state中的点击节点ID
+                        st.session_state.clicked_node_id = clicked_node_id
+                        
                         # 找到对应的节点详细信息
                         clicked_node = next((result for result in all_results if result['index'] == clicked_node_id), None)
                         if clicked_node:
@@ -863,7 +902,11 @@ def main():
                                     
                                     # 添加关闭按钮
                                     col1, col2, col3 = st.columns([1, 1, 1])
-                                    with col2:
+                                    with col1:
+                                        if st.button("🔄 清除节点选择", key="clear_selection", type="secondary"):
+                                            st.session_state.clicked_node_id = None
+                                            st.rerun()
+                                    with col3:
                                         if st.button("✖️ 关闭信息框", key="close_popup", type="primary"):
                                             st.rerun()
             
